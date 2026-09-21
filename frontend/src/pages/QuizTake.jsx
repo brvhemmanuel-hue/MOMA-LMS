@@ -19,6 +19,7 @@ export default function QuizTake() {
   const [activeAttempt, setActiveAttempt] = useState(null); // the in-progress attempt being taken right now
   const [answers, setAnswers] = useState({});
   const [lastResult, setLastResult] = useState(null); // most recently submitted attempt, shown as a result screen
+  const [reviewing, setReviewing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [starting, setStarting] = useState(false);
@@ -175,9 +176,18 @@ export default function QuizTake() {
             </>
           )}
         </div>
-        <Button variant="outline" onClick={() => navigate('/quizzes')}>Back to quizzes</Button>
+        <div className="flex gap-3">
+          <Button variant="outline" onClick={() => navigate('/quizzes')}>Back to quizzes</Button>
+          <Button variant="ghost" onClick={() => setReviewing(true)}>Review your answers</Button>
+        </div>
       </div>
     );
+  }
+
+  // ---- Reviewing past attempt(s): shows every question with the student's
+  // answer, whether it was right, and the correct answer where relevant ----
+  if (reviewing) {
+    return <QuizReview quizTitle={quiz.title} quizId={id} onBack={() => setReviewing(false)} />;
   }
 
   // ---- Landing / start screen ----
@@ -202,8 +212,9 @@ export default function QuizTake() {
       {error && <p className="text-sm text-[var(--color-bad)] bg-[var(--color-bad-soft)] rounded-lg px-3 py-2">{error}</p>}
 
       {bestAttempt && (
-        <div className="bg-[var(--color-good-soft)] text-[var(--color-good)] rounded-2xl p-4 text-sm">
-          Your best score so far: <span className="font-semibold">{bestAttempt.score} / {bestAttempt.max_score}</span>
+        <div className="bg-[var(--color-good-soft)] text-[var(--color-good)] rounded-2xl p-4 text-sm flex items-center justify-between gap-3 flex-wrap">
+          <span>Your best score so far: <span className="font-semibold">{bestAttempt.score} / {bestAttempt.max_score}</span></span>
+          <button onClick={() => setReviewing(true)} className="text-xs font-medium underline">Review your answers</button>
         </div>
       )}
 
@@ -221,3 +232,96 @@ export default function QuizTake() {
     </div>
   );
 }
+
+function QuizReview({ quizTitle, quizId, onBack }) {
+  const [attempts, setAttempts] = useState(null);
+  const [error, setError] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
+
+  useEffect(() => {
+    api
+      .myQuizAttempts(quizId)
+      .then((d) => {
+        setAttempts(d.attempts);
+        if (d.attempts.length > 0) setSelectedId(d.attempts[d.attempts.length - 1].id);
+      })
+      .catch((e) => setError(e.message));
+  }, [quizId]);
+
+  if (error) return <p className="text-sm text-[var(--color-bad)]">{error}</p>;
+  if (!attempts) return <p className="text-sm text-[var(--color-muted)]">Loading...</p>;
+
+  const attempt = attempts.find((a) => a.id === selectedId) || attempts[attempts.length - 1];
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h1 className="font-display text-2xl text-[var(--color-navy)]">{quizTitle} - Review</h1>
+        <button onClick={onBack} className="text-sm text-[var(--color-muted)] hover:underline">← Back</button>
+      </div>
+
+      {attempts.length > 1 && (
+        <div className="flex gap-2 flex-wrap">
+          {attempts.map((a) => (
+            <button
+              key={a.id}
+              onClick={() => setSelectedId(a.id)}
+              className={`text-xs font-medium rounded-lg px-3 py-1.5 border ${
+                a.id === attempt.id ? 'bg-[var(--color-navy)] text-white border-[var(--color-navy)]' : 'border-[var(--color-line)] text-[var(--color-ink-soft)]'
+              }`}
+            >
+              Attempt {a.attempt_number}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl border border-[var(--color-line)] p-5 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <p className="text-xs uppercase text-[var(--color-muted)]">
+            Attempt {attempt.attempt_number} · {formatDateTime(attempt.submitted_at)}
+          </p>
+          <p className="font-display text-2xl text-[var(--color-navy)] mt-1">{attempt.score} / {attempt.max_score}</p>
+        </div>
+        {attempt.status !== 'graded' && <Badge tone="warn">Some answers still pending grading</Badge>}
+      </div>
+
+      <div className="space-y-4">
+        {attempt.answers.map((a, i) => {
+          const isPending = a.question_type === 'short_answer' && a.is_correct === null;
+          return (
+            <div key={a.id} className="bg-white rounded-2xl border border-[var(--color-line)] p-5">
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <p className="text-sm font-medium">{i + 1}. {a.question_text}</p>
+                {isPending ? (
+                  <Badge tone="warn">Pending</Badge>
+                ) : (
+                  <Badge tone={a.is_correct ? 'good' : 'bad'}>{a.is_correct ? `Correct (+${a.points_awarded})` : 'Incorrect'}</Badge>
+                )}
+              </div>
+
+              <div className="space-y-1.5 text-sm">
+                <p>
+                  <span className="text-[var(--color-muted)]">Your answer: </span>
+                  <span className={a.is_correct === false ? 'text-[var(--color-bad)]' : ''}>
+                    {a.answer_text || <em className="text-[var(--color-muted)]">No answer given</em>}
+                  </span>
+                </p>
+                {!isPending && a.is_correct === false && a.correct_answer && (
+                  <p>
+                    <span className="text-[var(--color-muted)]">Correct answer: </span>
+                    <span className="text-[var(--color-good)] font-medium">{a.correct_answer}</span>
+                  </p>
+                )}
+                {isPending && (
+                  <p className="text-xs text-[var(--color-muted)]">Your teacher hasn't graded this answer yet.</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
