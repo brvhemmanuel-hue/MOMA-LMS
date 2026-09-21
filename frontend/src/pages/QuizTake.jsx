@@ -18,6 +18,7 @@ export default function QuizTake() {
   const [pastAttempts, setPastAttempts] = useState([]);
   const [activeAttempt, setActiveAttempt] = useState(null); // the in-progress attempt being taken right now
   const [answers, setAnswers] = useState({});
+  const [selectedIndex, setSelectedIndex] = useState({}); // tracks the chosen option's position per question, not its text - keeps duplicate-worded options from being ambiguous
   const [lastResult, setLastResult] = useState(null); // most recently submitted attempt, shown as a result screen
   const [reviewing, setReviewing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -57,6 +58,7 @@ export default function QuizTake() {
       setActiveAttempt(data.attempt);
       setQuestions(data.questions);
       setAnswers({});
+      setSelectedIndex({});
       setLastResult(null);
     } catch (err) {
       setError(err.message);
@@ -110,13 +112,16 @@ export default function QuizTake() {
 
               {q.question_type === 'multiple_choice' && (
                 <div className="space-y-2">
-                  {q.options.map((opt) => (
-                    <label key={opt} className="flex items-center gap-2 text-sm p-2 rounded-lg hover:bg-[var(--color-bg)] cursor-pointer">
+                  {q.options.map((opt, oi) => (
+                    <label key={oi} className="flex items-center gap-2 text-sm p-2 rounded-lg hover:bg-[var(--color-bg)] cursor-pointer">
                       <input
                         type="radio"
                         name={q.id}
-                        checked={answers[q.id] === opt}
-                        onChange={() => setAnswers({ ...answers, [q.id]: opt })}
+                        checked={selectedIndex[q.id] === oi}
+                        onChange={() => {
+                          setAnswers({ ...answers, [q.id]: opt });
+                          setSelectedIndex({ ...selectedIndex, [q.id]: oi });
+                        }}
                         className="accent-[var(--color-navy)]"
                       />
                       {opt}
@@ -127,13 +132,16 @@ export default function QuizTake() {
 
               {q.question_type === 'true_false' && (
                 <div className="flex gap-4">
-                  {['True', 'False'].map((opt) => (
-                    <label key={opt} className="flex items-center gap-2 text-sm">
+                  {['True', 'False'].map((opt, oi) => (
+                    <label key={oi} className="flex items-center gap-2 text-sm">
                       <input
                         type="radio"
                         name={q.id}
-                        checked={answers[q.id] === opt}
-                        onChange={() => setAnswers({ ...answers, [q.id]: opt })}
+                        checked={selectedIndex[q.id] === oi}
+                        onChange={() => {
+                          setAnswers({ ...answers, [q.id]: opt });
+                          setSelectedIndex({ ...selectedIndex, [q.id]: oi });
+                        }}
                         className="accent-[var(--color-navy)]"
                       />
                       {opt}
@@ -154,6 +162,16 @@ export default function QuizTake() {
         </Button>
       </div>
     );
+  }
+
+  // ---- Reviewing past attempt(s): shows every question with the student's
+  // answer, whether it was right, and the correct answer where relevant.
+  // Checked before the "just submitted" screen below, since that screen's
+  // own "Review your answers" button sets this flag but lastResult stays
+  // truthy afterwards - if lastResult were checked first, clicking the
+  // button would never actually navigate anywhere. ----
+  if (reviewing) {
+    return <QuizReview quizTitle={quiz.title} quizId={id} onBack={() => setReviewing(false)} />;
   }
 
   // ---- Just-submitted result screen ----
@@ -184,12 +202,6 @@ export default function QuizTake() {
     );
   }
 
-  // ---- Reviewing past attempt(s): shows every question with the student's
-  // answer, whether it was right, and the correct answer where relevant ----
-  if (reviewing) {
-    return <QuizReview quizTitle={quiz.title} quizId={id} onBack={() => setReviewing(false)} />;
-  }
-
   // ---- Landing / start screen ----
   const attemptsUsed = pastAttempts.length;
   const outOfAttempts = quiz.max_attempts && attemptsUsed >= quiz.max_attempts;
@@ -214,7 +226,7 @@ export default function QuizTake() {
       {bestAttempt && (
         <div className="bg-[var(--color-good-soft)] text-[var(--color-good)] rounded-2xl p-4 text-sm flex items-center justify-between gap-3 flex-wrap">
           <span>Your best score so far: <span className="font-semibold">{bestAttempt.score} / {bestAttempt.max_score}</span></span>
-          <button onClick={() => setReviewing(true)} className="text-xs font-medium underline">Review your answers</button>
+          <button onClick={() => setReviewing(true)} className="text-xs font-medium underline hover:opacity-70 transition-opacity">Review your answers</button>
         </div>
       )}
 
@@ -266,8 +278,8 @@ function QuizReview({ quizTitle, quizId, onBack }) {
             <button
               key={a.id}
               onClick={() => setSelectedId(a.id)}
-              className={`text-xs font-medium rounded-lg px-3 py-1.5 border ${
-                a.id === attempt.id ? 'bg-[var(--color-navy)] text-white border-[var(--color-navy)]' : 'border-[var(--color-line)] text-[var(--color-ink-soft)]'
+              className={`text-xs font-medium rounded-lg px-3 py-1.5 border transition-colors ${
+                a.id === attempt.id ? 'bg-[var(--color-navy)] text-white border-[var(--color-navy)]' : 'border-[var(--color-line)] text-[var(--color-ink-soft)] hover:bg-[var(--color-bg-deep)]'
               }`}
             >
               Attempt {a.attempt_number}
