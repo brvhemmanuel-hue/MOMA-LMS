@@ -152,13 +152,19 @@ async function submitExercise(req, res) {
   if (!exercise) return res.status(404).json({ error: 'Exercise not found' });
   if (exercise.class_id !== req.user.class_id) return res.status(403).json({ error: 'This exercise is not available to you' });
 
-  const uploaded = await uploadBuffer(req.file.buffer, req.file.originalname, 'exercise-submissions');
-  const isLate = exercise.due_date ? new Date() > new Date(exercise.due_date) : false;
-
   const existing = await query(
     'select * from exercise_submissions where exercise_id = $1 and student_id = $2',
     [req.params.id, req.user.id]
   );
+  if (existing[0] && existing[0].grade !== null) {
+    return res.status(403).json({
+      error: 'This submission has already been graded and can no longer be replaced. Ask your teacher if you need to resubmit.',
+    });
+  }
+
+  const uploaded = await uploadBuffer(req.file.buffer, req.file.originalname, 'exercise-submissions');
+  const isLate = exercise.due_date ? new Date() > new Date(exercise.due_date) : false;
+
   if (existing[0]?.file_url) await deleteBlob(existing[0].file_url);
 
   const rows = await query(
