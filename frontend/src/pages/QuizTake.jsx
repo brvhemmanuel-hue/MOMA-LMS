@@ -1,0 +1,223 @@
+import { useEffect, useState, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import Button from '../components/Button';
+import Badge from '../components/Badge';
+import CountdownTimer from '../components/CountdownTimer';
+import { TextArea } from '../components/Input';
+import { formatDateTime, isPast } from '../utils/date';
+
+export default function QuizTake() {
+  const { id } = useParams();
+  const { isTeacher, isAdmin } = useAuth();
+  const navigate = useNavigate();
+
+  const [quiz, setQuiz] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [pastAttempts, setPastAttempts] = useState([]);
+  const [activeAttempt, setActiveAttempt] = useState(null); // the in-progress attempt being taken right now
+  const [answers, setAnswers] = useState({});
+  const [lastResult, setLastResult] = useState(null); // most recently submitted attempt, shown as a result screen
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [starting, setStarting] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (isTeacher || isAdmin) {
+      navigate(`/quizzes/${id}/edit`, { replace: true });
+      return;
+    }
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, isTeacher, isAdmin]);
+
+  function load() {
+    setLoading(true);
+    setError('');
+    api
+      .getQuiz(id)
+      .then((d) => {
+        setQuiz(d.quiz);
+        setQuestions(d.questions);
+        setPastAttempts(d.attempts || []);
+        document.title = `${d.quiz.title} - MOMA LMS`;
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }
+
+  async function handleStart() {
+    setStarting(true);
+    setError('');
+    try {
+      const data = await api.startQuizAttempt(id);
+      setActiveAttempt(data.attempt);
+      setQuestions(data.questions);
+      setAnswers({});
+      setLastResult(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  const handleSubmit = useCallback(async () => {
+    if (!activeAttempt) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      const answerList = questions.map((q) => ({ question_id: q.id, answer_text: answers[q.id] || '' }));
+      const data = await api.submitQuizAttempt(id, { attempt_id: activeAttempt.id, answers: answerList });
+      setLastResult(data.attempt);
+      setActiveAttempt(null);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }, [activeAttempt, answers, questions, id]);
+
+  if (loading) return <p className="text-sm text-[var(--color-muted)]">Loading...</p>;
+  if (error && !quiz) return <p className="text-sm text-[var(--color-bad)]">{error}</p>;
+  if (!quiz) return null;
+
+  // ---- Taking the quiz right now ----
+  if (activeAttempt) {
+    const expiresAt = quiz.time_limit_minutes
+      ? new Date(new Date(activeAttempt.started_at).getTime() + quiz.time_limit_minutes * 60000)
+      : null;
+
+    return (
+      <div className="space-y-6 max-w-2xl">
+        <div className="flex items-center justify-between flex-wrap gap-3 sticky top-0 bg-[var(--color-bg)] py-2 z-10">
+          <h1 className="font-display text-xl text-[var(--color-navy)]">{quiz.title}</h1>
+          {expiresAt && <CountdownTimer expiresAt={expiresAt} onExpire={handleSubmit} />}
+        </div>
+
+        {error && <p className="text-sm text-[var(--color-bad)] bg-[var(--color-bad-soft)] rounded-lg px-3 py-2">{error}</p>}
+
+        <div className="space-y-4">
+          {questions.map((q, i) => (
+            <div key={q.id} className="bg-white rounded-2xl border border-[var(--color-line)] p-5">
+              <p className="text-sm font-medium mb-3">
+                {i + 1}. {q.question_text} <span className="text-xs text-[var(--color-muted)] font-normal">({q.points} pt{q.points > 1 ? 's' : ''})</span>
+              </p>
+
+              {q.question_type === 'multiple_choice' && (
+                <div className="space-y-2">
+                  {q.options.map((opt) => (
+                    <label key={opt} className="flex items-center gap-2 text-sm p-2 rounded-lg hover:bg-[var(--color-bg)] cursor-pointer">
+                      <input
+                        type="radio"
+                        name={q.id}
+                        checked={answers[q.id] === opt}
+                        onChange={() => setAnswers({ ...answers, [q.id]: opt })}
+                        className="accent-[var(--color-navy)]"
+                      />
+                      {opt}
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {q.question_type === 'true_false' && (
+                <div className="flex gap-4">
+                  {['True', 'False'].map((opt) => (
+                    <label key={opt} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="radio"
+                        name={q.id}
+                        checked={answers[q.id] === opt}
+                        onChange={() => setAnswers({ ...answers, [q.id]: opt })}
+                        className="accent-[var(--color-navy)]"
+                      />
+                      {opt}
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {q.question_type === 'short_answer' && (
+                <TextArea rows={3} value={answers[q.id] || ''} onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} placeholder="Type your answer..." />
+              )}
+            </div>
+          ))}
+        </div>
+
+        <Button variant="accent" onClick={handleSubmit} disabled={submitting}>
+          {submitting ? 'Submitting...' : 'Submit quiz'}
+        </Button>
+      </div>
+    );
+  }
+
+  // ---- Just-submitted result screen ----
+  if (lastResult) {
+    return (
+      <div className="space-y-6 max-w-xl">
+        <h1 className="font-display text-2xl text-[var(--color-navy)]">{quiz.title}</h1>
+        <div className="bg-white rounded-2xl border border-[var(--color-line)] p-6 text-center">
+          {lastResult.status === 'graded' ? (
+            <>
+              <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">Your score</p>
+              <p className="font-display text-4xl text-[var(--color-navy)] mt-1">{lastResult.score} / {lastResult.max_score}</p>
+            </>
+          ) : (
+            <>
+              <p className="font-display text-lg text-[var(--color-navy)]">Submitted!</p>
+              <p className="text-sm text-[var(--color-muted)] mt-2">
+                This quiz has short-answer questions your teacher needs to review. Your final score will appear here once it's graded.
+              </p>
+            </>
+          )}
+        </div>
+        <Button variant="outline" onClick={() => navigate('/quizzes')}>Back to quizzes</Button>
+      </div>
+    );
+  }
+
+  // ---- Landing / start screen ----
+  const attemptsUsed = pastAttempts.length;
+  const outOfAttempts = quiz.max_attempts && attemptsUsed >= quiz.max_attempts;
+  const notYetOpen = quiz.available_from && !isPast(quiz.available_from);
+  const closed = isPast(quiz.available_until);
+  const bestAttempt = pastAttempts.reduce((best, a) => (a.score !== null && (!best || a.score > best.score) ? a : best), null);
+
+  return (
+    <div className="space-y-6 max-w-xl">
+      <h1 className="font-display text-2xl text-[var(--color-navy)]">{quiz.title}</h1>
+      {quiz.description && <p className="text-sm text-[var(--color-ink-soft)]">{quiz.description}</p>}
+
+      <div className="bg-white rounded-2xl border border-[var(--color-line)] p-5 space-y-2 text-sm">
+        <div className="flex justify-between"><span className="text-[var(--color-muted)]">Questions</span><span>{questions.length}</span></div>
+        <div className="flex justify-between"><span className="text-[var(--color-muted)]">Time limit</span><span>{quiz.time_limit_minutes ? `${quiz.time_limit_minutes} minutes` : 'Untimed'}</span></div>
+        <div className="flex justify-between"><span className="text-[var(--color-muted)]">Attempts</span><span>{quiz.max_attempts ? `${attemptsUsed} of ${quiz.max_attempts} used` : `${attemptsUsed} so far (unlimited)`}</span></div>
+        {quiz.available_until && <div className="flex justify-between"><span className="text-[var(--color-muted)]">Closes</span><span>{formatDateTime(quiz.available_until)}</span></div>}
+      </div>
+
+      {error && <p className="text-sm text-[var(--color-bad)] bg-[var(--color-bad-soft)] rounded-lg px-3 py-2">{error}</p>}
+
+      {bestAttempt && (
+        <div className="bg-[var(--color-good-soft)] text-[var(--color-good)] rounded-2xl p-4 text-sm">
+          Your best score so far: <span className="font-semibold">{bestAttempt.score} / {bestAttempt.max_score}</span>
+        </div>
+      )}
+
+      {closed ? (
+        <Badge tone="bad">This quiz is closed</Badge>
+      ) : notYetOpen ? (
+        <Badge tone="muted">Opens {formatDateTime(quiz.available_from)}</Badge>
+      ) : outOfAttempts ? (
+        <Badge tone="warn">You've used all your attempts</Badge>
+      ) : (
+        <Button variant="accent" onClick={handleStart} disabled={starting}>
+          {starting ? 'Starting...' : attemptsUsed > 0 ? 'Try again' : 'Start quiz'}
+        </Button>
+      )}
+    </div>
+  );
+}

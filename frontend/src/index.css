@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Libre Baskerville", ui-serif, Georgia, serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Deep academic blue, the school's primary color */
+  --color-navy: #14245c;
+  --color-navy-deep: #0c1740;
+  --color-navy-soft: #1e3a8a;
+
+  /* Gold/yellow, matching the emblem's ring */
+  --color-gold: #eab308;
+  --color-gold-deep: #a16207;
+  --color-gold-soft: #fef3c7;
+
+  --color-ink: #1a1f2e;
+  --color-ink-soft: #4b5468;
+  --color-muted: #6b7280;
+
+  --color-bg: #f8fafc;
+  --color-bg-deep: #eef2f7;
+  --color-line: #e2e8f0;
+
+  --color-good: #15803d;
+  --color-good-soft: #dcfce7;
+  --color-warn: #b45309;
+  --color-warn-soft: #fef3c7;
+  --color-bad: #b91c1c;
+  --color-bad-soft: #fee2e2;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+::selection {
+  background: var(--color-gold-soft);
+  color: var(--color-navy-deep);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-navy-soft);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: white; }
+  .printable-area { box-shadow: none !important; border: none !important; }
+}
