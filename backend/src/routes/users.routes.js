@@ -13,5 +13,7 @@ router.delete('/students/:id', asyncHandler(ctrl.deleteStudent));
 router.get('/students/:id/report', asyncHandler(ctrl.studentReport));
 
 router.get('/teachers', requireRole('admin'), asyncHandler(ctrl.listTeachers));
+router.put('/teachers/:id', requireRole('admin'), asyncHandler(ctrl.updateTeacher));
+router.delete('/teachers/:id', requireRole('admin'), asyncHandler(ctrl.deleteTeacher));
 
 module.exports = router;
