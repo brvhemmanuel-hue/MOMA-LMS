@@ -121,4 +121,6 @@ export const api = {
   deleteStudent: (id) => request(`/api/users/students/${id}`, { method: 'DELETE' }),
   studentReport: (id) => request(`/api/users/students/${id}/report`),
   listTeachers: () => request('/api/users/teachers'),
+  updateTeacher: (id, body) => request(`/api/users/teachers/${id}`, { method: 'PUT', body }),
+  deleteTeacher: (id) => request(`/api/users/teachers/${id}`, { method: 'DELETE' }),
 };
