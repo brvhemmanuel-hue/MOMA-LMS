@@ -1,4 +1,5 @@
 const { query } = require('../config/db');
+const { deleteBlob } = require('../utils/blob');
 
 /** Class ids a teacher is associated with: classes they created, or have used for a quiz/exercise/material. */
 async function teacherClassIds(teacherId) {
@@ -115,7 +116,9 @@ async function deleteStudent(req, res) {
     if (typeof access === 'string') return res.status(403).json({ error: access });
   }
 
+  const files = await query('select file_url as url from exercise_submissions where student_id = $1', [req.params.id]);
   await query('delete from users where id = $1', [req.params.id]);
+  await Promise.all(files.map((f) => deleteBlob(f.url)));
   res.json({ success: true });
 }
 
@@ -172,4 +175,62 @@ async function studentReport(req, res) {
   });
 }
 
-module.exports = { listStudents, updateStudent, deleteStudent, listTeachers, studentReport, teacherClassIds };
+/** Admin only: edit a teacher's name, email, or active status. */
+async function updateTeacher(req, res) {
+  const targetRows = await query("select id from users where id = $1 and role = 'teacher'", [req.params.id]);
+  if (!targetRows[0]) return res.status(404).json({ error: 'Teacher not found' });
+
+  const { full_name, email, is_active } = req.body;
+  const update = {};
+  if (full_name !== undefined) update.full_name = full_name.trim();
+  if (email !== undefined) update.email = email.trim().toLowerCase();
+  if (is_active !== undefined) update.is_active = is_active;
+
+  const fields = Object.keys(update);
+  if (fields.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+
+  const setClause = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
+  const values = fields.map((f) => update[f]);
+  values.push(req.params.id);
+
+  try {
+    const rows = await query(
+      `update users set ${setClause} where id = $${values.length}
+       returning id, full_name, email, is_active, created_at`,
+      values
+    );
+    res.json({ teacher: rows[0] });
+  } catch (error) {
+    if (error.message.includes('duplicate key')) return res.status(409).json({ error: 'That email is already in use' });
+    res.status(400).json({ error: error.message });
+  }
+}
+
+/**
+ * Admin only. Deleting a teacher also deletes everything they created
+ * (their quizzes, exercises and materials, along with the attempts and
+ * submissions attached to them) - that's how the schema's cascades are
+ * set up. Classes they created are kept, just no longer attributed to
+ * anyone. Uploaded files for the removed content are cleaned out of
+ * storage too, so they don't linger as orphans.
+ */
+async function deleteTeacher(req, res) {
+  const targetRows = await query("select id from users where id = $1 and role = 'teacher'", [req.params.id]);
+  if (!targetRows[0]) return res.status(404).json({ error: 'Teacher not found' });
+
+  const [attachments, submissions, materials] = await Promise.all([
+    query('select attachment_url as url from exercises where teacher_id = $1 and attachment_url is not null', [req.params.id]),
+    query(
+      `select s.file_url as url from exercise_submissions s
+       join exercises e on e.id = s.exercise_id where e.teacher_id = $1`,
+      [req.params.id]
+    ),
+    query('select file_url as url from materials where teacher_id = $1', [req.params.id]),
+  ]);
+
+  await query('delete from users where id = $1', [req.params.id]);
+  await Promise.all([...attachments, ...submissions, ...materials].map((f) => deleteBlob(f.url)));
+  res.json({ success: true });
+}
+
+module.exports = { listStudents, updateStudent, deleteStudent, listTeachers, updateTeacher, deleteTeacher, studentReport, teacherClassIds };
