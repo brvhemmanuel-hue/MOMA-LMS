@@ -7,7 +7,7 @@ const { query } = require('../config/db');
  */
 async function listClasses(req, res) {
   const rows = await query(
-    `select c.*, count(u.id) filter (where u.role = 'student') as student_count
+    `select c.*, count(u.id) filter (where u.role = 'student' and u.status = 'approved') as student_count
      from classes c
      left join users u on u.class_id = c.id
      group by c.id

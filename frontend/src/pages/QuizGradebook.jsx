@@ -185,6 +185,7 @@ function GradingPanel({ quizId, student, onClose, onGraded }) {
             data.answers.map((a, i) => (
               <div key={a.id} className="border border-[var(--color-line)] rounded-xl p-4">
                 <p className="text-sm font-medium mb-2">{i + 1}. {a.question_text} <span className="text-xs text-[var(--color-muted)] font-normal">({a.points} pts)</span></p>
+                {a.image_url && <img src={a.image_url} alt="Question picture" className="max-h-40 max-w-full rounded-lg border border-[var(--color-line)] mb-2" />}
                 <p className="text-sm text-[var(--color-ink-soft)] bg-[var(--color-bg)] rounded-lg px-3 py-2 mb-2 whitespace-pre-wrap">{a.answer_text || <em className="text-[var(--color-muted)]">No answer given</em>}</p>
 
                 {a.question_type === 'short_answer' ? (

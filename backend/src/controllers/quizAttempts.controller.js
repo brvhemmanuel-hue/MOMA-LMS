@@ -1,5 +1,7 @@
 const { query, withTransaction } = require('../config/db');
 const { generateGradebookExcel } = require('../utils/excelReport');
+const { orderForAttempt } = require('../utils/shuffle');
+const { fetchImage } = require('../utils/images');
 
 function withinWindow(quiz) {
   const now = new Date();
@@ -38,10 +40,10 @@ async function startAttempt(req, res) {
   const inProgress = existingAttempts.find((a) => a.status === 'in_progress');
   if (inProgress) {
     const questions = await query(
-      'select id, order_index, question_text, question_type, options, points from quiz_questions where quiz_id = $1 order by order_index asc',
+      'select id, order_index, question_text, question_type, options, points, image_url from quiz_questions where quiz_id = $1 order by order_index asc',
       [req.params.id]
     );
-    return res.json({ attempt: inProgress, questions, resumed: true });
+    return res.json({ attempt: inProgress, questions: orderForAttempt(questions, inProgress.id, quiz.shuffle_questions), resumed: true });
   }
 
   // Only a fresh attempt is subject to the window and attempt-limit checks.
@@ -58,11 +60,11 @@ async function startAttempt(req, res) {
   );
 
   const questions = await query(
-    'select id, order_index, question_text, question_type, options, points from quiz_questions where quiz_id = $1 order by order_index asc',
+    'select id, order_index, question_text, question_type, options, points, image_url from quiz_questions where quiz_id = $1 order by order_index asc',
     [req.params.id]
   );
 
-  res.status(201).json({ attempt: attemptRows[0], questions, resumed: false });
+  res.status(201).json({ attempt: attemptRows[0], questions: orderForAttempt(questions, attemptRows[0].id, quiz.shuffle_questions), resumed: false });
 }
 
 function answersMatch(given, correct) {
@@ -133,6 +135,8 @@ async function submitAttempt(req, res) {
 
 /** A student's own attempts + per-question breakdown, for reviewing results. */
 async function myAttempts(req, res) {
+  const quizRows = await query('select shuffle_questions from quizzes where id = $1', [req.params.id]);
+  const shuffle = Boolean(quizRows[0]?.shuffle_questions);
   const attempts = await query(
     'select * from quiz_attempts where quiz_id = $1 and student_id = $2 order by attempt_number asc',
     [req.params.id, req.user.id]
@@ -142,7 +146,7 @@ async function myAttempts(req, res) {
   let answersByAttempt = {};
   if (attemptIds.length > 0) {
     const answers = await query(
-      `select qa.*, qq.question_text, qq.question_type, qq.options, qq.correct_answer, qq.points
+      `select qa.*, qq.question_text, qq.question_type, qq.options, qq.correct_answer, qq.points, qq.order_index, qq.image_url
        from quiz_answers qa
        join quiz_questions qq on qq.id = qa.question_id
        where qa.attempt_id = any($1::uuid[])
@@ -153,6 +157,9 @@ async function myAttempts(req, res) {
       (acc[a.attempt_id] = acc[a.attempt_id] || []).push(a);
       return acc;
     }, {});
+    for (const a of attempts) {
+      if (answersByAttempt[a.id]) answersByAttempt[a.id] = orderForAttempt(answersByAttempt[a.id], a.id, shuffle);
+    }
   }
 
   res.json({
@@ -176,7 +183,7 @@ async function gradebook(req, res) {
             max(qa.submitted_at) as last_submitted_at
      from users u
      left join quiz_attempts qa on qa.student_id = u.id and qa.quiz_id = $1
-     where u.role = 'student' and u.class_id = $2
+     where u.role = 'student' and u.status = 'approved' and u.class_id = $2
      group by u.id, u.full_name, u.email
      order by u.full_name asc`,
     [req.params.id, quiz.class_id]
@@ -251,7 +258,7 @@ async function exportGradebook(req, res) {
             bool_or(qa.status = 'submitted') as has_pending_grading
      from users u
      left join quiz_attempts qa on qa.student_id = u.id and qa.quiz_id = $1
-     where u.role = 'student' and u.class_id = $2
+     where u.role = 'student' and u.status = 'approved' and u.class_id = $2
      group by u.id, u.full_name, u.email
      order by u.full_name asc`,
     [req.params.id, quiz.class_id]
@@ -298,7 +305,7 @@ async function studentAttemptDetail(req, res) {
   if (!attempt) return res.status(404).json({ error: 'This student has not attempted this quiz yet' });
 
   const answers = await query(
-    `select qa.*, qq.question_text, qq.question_type, qq.options, qq.correct_answer, qq.points, qq.order_index
+    `select qa.*, qq.question_text, qq.question_type, qq.options, qq.correct_answer, qq.points, qq.order_index, qq.image_url
      from quiz_answers qa
      join quiz_questions qq on qq.id = qa.question_id
      where qa.attempt_id = $1
@@ -309,4 +316,60 @@ async function studentAttemptDetail(req, res) {
   res.json({ attempt, answers });
 }
 
-module.exports = { startAttempt, submitAttempt, myAttempts, gradebook, gradeAnswer, exportGradebook, studentAttemptDetail };
+/**
+ * A student's own results and corrections as a PDF: the letterhead, their name and the quiz title,
+ * their score, then every question in the order they answered it with the right answers marked.
+ */
+async function attemptPdf(req, res) {
+  const { id: quizId, attemptId } = req.params;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(attemptId)) {
+    return res.status(404).json({ error: 'Attempt not found' });
+  }
+
+  const attemptRows = await query(
+    `select a.*, q.title as quiz_title, q.max_attempts, q.shuffle_questions, t.full_name as teacher_name
+     from quiz_attempts a
+     join quizzes q on q.id = a.quiz_id
+     left join users t on t.id = q.teacher_id
+     where a.id = $1 and a.quiz_id = $2`,
+    [attemptId, quizId]
+  );
+  const attempt = attemptRows[0];
+  // Someone else's attempt looks exactly like one that does not exist.
+  if (!attempt || attempt.student_id !== req.user.id) return res.status(404).json({ error: 'Attempt not found' });
+  if (attempt.status === 'in_progress') return res.status(400).json({ error: 'Submit the quiz first, then you can download your results.' });
+
+  const studentRows = await query(
+    'select u.full_name, c.name as class_name from users u left join classes c on c.id = u.class_id where u.id = $1',
+    [req.user.id]
+  );
+  const rows = await query(
+    `select qq.id, qq.order_index, qq.question_text, qq.question_type, qq.options, qq.correct_answer, qq.points, qq.image_url,
+            qa.answer_text, qa.is_correct, qa.points_awarded
+     from quiz_questions qq
+     left join quiz_answers qa on qa.question_id = qq.id and qa.attempt_id = $1
+     where qq.quiz_id = $2`,
+    [attemptId, quizId]
+  );
+  const questions = orderForAttempt(rows, attemptId, attempt.shuffle_questions);
+
+  // Pictures are fetched from storage so they can be printed with the questions.
+  const pictures = await Promise.all(questions.map((q) => fetchImage(q.image_url)));
+  questions.forEach((q, i) => (q.image_buffer = pictures[i]));
+
+  const { buildAttemptPdf } = require('../utils/attemptPdf');
+  const pdf = await buildAttemptPdf({
+    student: { full_name: studentRows[0]?.full_name || req.user.full_name, class_name: studentRows[0]?.class_name || '' },
+    quiz: { title: attempt.quiz_title, teacher_name: attempt.teacher_name, max_attempts: attempt.max_attempts },
+    attempt,
+    questions,
+  });
+
+  const safe = (v) => String(v).replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'quiz';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${safe(attempt.quiz_title)}-${safe(studentRows[0]?.full_name || 'results')}-results.pdf"`);
+  res.send(pdf);
+}
+
+module.exports = {
+  attemptPdf, startAttempt, submitAttempt, myAttempts, gradebook, gradeAnswer, exportGradebook, studentAttemptDetail };

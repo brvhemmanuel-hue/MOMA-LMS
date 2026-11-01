@@ -123,8 +123,8 @@ async function studentDashboard(req, res) {
 /** School-wide view for the admin account: nothing scoped to "my" content, everything is everyone's. */
 async function adminDashboard(req, res) {
   const [teacherCount, studentCount, classCount, quizCount, exerciseCount, materialCount, recentActivity] = await Promise.all([
-    query("select count(*) as count from users where role = 'teacher'"),
-    query("select count(*) as count from users where role = 'student'"),
+    query("select count(*) as count from users where role = 'teacher' and status = 'approved'"),
+    query("select count(*) as count from users where role = 'student' and status = 'approved'"),
     query('select count(*) as count from classes'),
     query('select count(*) as count from quizzes'),
     query('select count(*) as count from exercises'),

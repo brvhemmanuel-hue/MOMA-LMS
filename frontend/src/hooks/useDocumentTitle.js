@@ -10,6 +10,7 @@ const ROUTE_TITLES = [
   { prefix: '/classes', title: 'Classes' },
   { prefix: '/students', title: 'Students' },
   { prefix: '/teachers', title: 'Teachers' },
+  { prefix: '/approvals', title: 'Approvals' },
   { prefix: '/settings', title: 'Settings' },
   { prefix: '/', title: 'Dashboard' },
 ];

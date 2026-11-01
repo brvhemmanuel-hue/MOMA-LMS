@@ -1,11 +1,30 @@
+import { useState } from 'react';
 import { Field, Input, Select, TextArea } from './Input';
+import { api } from '../api/client';
+import { prepareImage } from '../utils/image';
 import Button from './Button';
 
 function emptyQuestion() {
-  return { question_text: '', question_type: 'multiple_choice', options: ['', ''], correct_answer: '', points: 1 };
+  return { question_text: '', question_type: 'multiple_choice', options: ['', ''], correct_answer: '', points: 1, image_url: '' };
 }
 
 export default function QuestionEditor({ questions, onChange }) {
+  const [pic, setPic] = useState({}); // upload progress and errors, by question position
+
+  async function attachPicture(i, file) {
+    if (!file) return;
+    setPic((p) => ({ ...p, [i]: { busy: true, error: '' } }));
+    try {
+      const ready = await prepareImage(file);
+      const { url } = await api.uploadQuestionImage(ready);
+      // functional update: the teacher may have kept typing while the picture uploaded
+      onChange((prev) => prev.map((q, idx) => (idx === i ? { ...q, image_url: url } : q)));
+      setPic((p) => ({ ...p, [i]: { busy: false, error: '' } }));
+    } catch (err) {
+      setPic((p) => ({ ...p, [i]: { busy: false, error: err.message } }));
+    }
+  }
+
   function updateQuestion(index, patch) {
     const next = questions.map((q, i) => (i === index ? { ...q, ...patch } : q));
     onChange(next);
@@ -90,6 +109,33 @@ export default function QuestionEditor({ questions, onChange }) {
                 className="w-24"
               />
             </Field>
+          </div>
+
+          <div>
+            <span className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1.5">Picture (optional)</span>
+            {q.image_url ? (
+              <div className="flex items-start gap-3">
+                <img src={q.image_url} alt="Picture for this question" className="h-24 max-w-[220px] object-contain rounded-lg border border-[var(--color-line)] bg-white" />
+                <button type="button" onClick={() => updateQuestion(i, { image_url: '' })} className="text-xs text-[var(--color-bad)] px-2 py-1 hover:bg-[var(--color-bad-soft)] rounded">
+                  Remove picture
+                </button>
+              </div>
+            ) : (
+              <label className={`inline-flex items-center gap-2 text-xs font-medium text-[var(--color-navy)] border border-dashed border-[var(--color-line)] rounded-lg px-3 py-2 hover:bg-[var(--color-bg)] ${pic[i]?.busy ? 'opacity-60' : 'cursor-pointer'}`}>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={pic[i]?.busy}
+                  onChange={(e) => {
+                    attachPicture(i, e.target.files[0]);
+                    e.target.value = '';
+                  }}
+                />
+                {pic[i]?.busy ? 'Uploading picture...' : '+ Add a picture'}
+              </label>
+            )}
+            {pic[i]?.error && <p className="text-xs text-[var(--color-bad)] mt-1">{pic[i].error}</p>}
           </div>
 
           <Field label="Question type">

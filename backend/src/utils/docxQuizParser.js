@@ -28,6 +28,9 @@ const mammoth = require('mammoth');
  * "A)", "B)", "C)"... lines. Short-answer questions have no ANSWER line -
  * they're graded by a teacher after students submit.
  *
+ * A picture belongs to the question whose "Q:" line most recently came before it, so
+ * insert it on its own line under the "Q:" line (or anywhere before the next "Q:").
+ *
  * Grouping by "Q:" markers (rather than by blank lines between blocks) is
  * a deliberate choice: converting a Word document to plain text collapses
  * or reformats blank lines and in-paragraph line breaks in ways that
@@ -114,39 +117,99 @@ function parseBlock(lines, blockNumber) {
   return { question_text, question_type, options: null, correct_answer: null, points };
 }
 
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+function decodeEntities(str) {
+  return str
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&([a-z]+);/gi, (m, name) => (name.toLowerCase() in ENTITIES ? ENTITIES[name.toLowerCase()] : m));
+}
+
+const ACCEPTED_IMAGES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg' };
+const MAX_IMAGES = 40;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Walks the document in reading order and yields text lines and pictures.
+ * Word's own line breaks inside a paragraph are kept, so a question typed with
+ * soft returns reads exactly the same as one typed as separate paragraphs.
+ */
+function* documentEvents(html) {
+  const blockRe = /<(p|h[1-6]|li)\b[^>]*>([\s\S]*?)<\/\1>/gi;
+  let m;
+  while ((m = blockRe.exec(html))) {
+    for (const token of m[2].split(/(<img\b[^>]*>)/i)) {
+      if (/^<img\b/i.test(token)) {
+        const src = /src="([^"]*)"/i.exec(token);
+        if (src) yield { type: 'image', src: src[1] };
+      } else {
+        const text = decodeEntities(token.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, ''));
+        for (const line of text.split('\n')) {
+          const t = line.trim();
+          if (t) yield { type: 'line', text: t };
+        }
+      }
+    }
+  }
+}
+
 /**
  * @param {Buffer} buffer - the uploaded .docx file's raw bytes
- * @returns {{ questions: object[], skipped: object[] }}
+ * @returns {Promise<{ questions: object[], skipped: object[], warnings: object[] }>}
+ *   Each question may carry `image: { buffer, extension }` for the controller to upload.
  */
 async function parseQuizDocx(buffer) {
-  const { value: text } = await mammoth.extractRawText({ buffer });
+  const { value: html } = await mammoth.convertToHtml(
+    { buffer },
+    {
+      convertImage: mammoth.images.imgElement((image) =>
+        image.read('base64').then((b64) => ({ src: `data:${image.contentType};base64,${b64}` }))
+      ),
+    }
+  );
 
-  const lines = text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  // Group lines into blocks, each starting at a line beginning with "Q:".
-  // Anything before the first "Q:" line (titles, instructions) is ignored.
+  // Group everything that follows a "Q:" line into that question's block.
+  // Anything before the first "Q:" line (titles, instructions, logos) is ignored.
   const blocks = [];
-  for (const l of lines) {
-    if (/^q[:.]/i.test(l)) {
-      blocks.push([l]);
-    } else if (blocks.length > 0) {
-      blocks[blocks.length - 1].push(l);
+  for (const ev of documentEvents(html)) {
+    if (ev.type === 'line') {
+      if (/^q[:.]/i.test(ev.text)) blocks.push({ lines: [ev.text], images: [] });
+      else if (blocks.length) blocks[blocks.length - 1].lines.push(ev.text);
+    } else if (blocks.length) {
+      blocks[blocks.length - 1].images.push(ev.src);
     }
   }
 
   const questions = [];
   const skipped = [];
+  const warnings = [];
+  let imageCount = 0;
 
   blocks.forEach((block, i) => {
-    const result = parseBlock(block, i + 1);
-    if (result.skipped) skipped.push({ reason: result.reason });
-    else questions.push(result);
+    const result = parseBlock(block.lines, i + 1);
+    if (result.skipped) {
+      skipped.push({ reason: result.reason });
+      return;
+    }
+    if (block.images.length) {
+      const label = `"${result.question_text.slice(0, 40)}"`;
+      const match = /^data:([^;]+);base64,(.*)$/s.exec(block.images[0]);
+      const ext = match && ACCEPTED_IMAGES[match[1].toLowerCase()];
+      const bytes = match ? Buffer.from(match[2], 'base64') : null;
+      if (!ext) warnings.push({ reason: `${label}: the picture was left out because its format is not supported. Use PNG or JPEG pictures.` });
+      else if (bytes.length > MAX_IMAGE_BYTES) warnings.push({ reason: `${label}: the picture was left out because it is larger than 4 MB.` });
+      else if (imageCount >= MAX_IMAGES) warnings.push({ reason: `${label}: the picture was left out because a document can hold at most ${MAX_IMAGES} pictures.` });
+      else {
+        imageCount += 1;
+        result.image = { buffer: bytes, extension: ext };
+      }
+      if (block.images.length > 1) warnings.push({ reason: `${label}: only the first picture is used. Each question can have one picture.` });
+    }
+    questions.push(result);
   });
 
-  return { questions, skipped };
+  return { questions, skipped, warnings };
 }
 
 module.exports = { parseQuizDocx };

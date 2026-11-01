@@ -22,13 +22,16 @@ export default function QuizForm() {
     time_limit_minutes: '',
     unlimited_attempts: true,
     max_attempts: 1,
+    shuffle_questions: true,
     status: 'draft',
   });
+  const [locked, setLocked] = useState(false); // true once students have attempted it: questions can no longer change
   const [questions, setQuestions] = useState([emptyQuestion()]);
 
   const [docxFile, setDocxFile] = useState(null);
   const [parsing, setParsing] = useState(false);
   const [skipped, setSkipped] = useState([]);
+  const [warnings, setWarnings] = useState([]);
 
   const [loading, setLoading] = useState(isEdit);
   const [error, setError] = useState('');
@@ -51,8 +54,10 @@ export default function QuizForm() {
             time_limit_minutes: d.quiz.time_limit_minutes || '',
             unlimited_attempts: !d.quiz.max_attempts,
             max_attempts: d.quiz.max_attempts || 1,
+            shuffle_questions: Boolean(d.quiz.shuffle_questions),
             status: d.quiz.status,
           });
+          setLocked(Boolean(d.has_attempts));
           setQuestions(
             d.questions.map((q) => ({
               question_text: q.question_text,
@@ -60,6 +65,7 @@ export default function QuizForm() {
               options: q.options || (q.question_type === 'true_false' ? ['True', 'False'] : ['', '']),
               correct_answer: q.correct_answer || '',
               points: Number(q.points),
+              image_url: q.image_url || '',
             }))
           );
         })
@@ -79,6 +85,7 @@ export default function QuizForm() {
         return [...base, ...result.questions];
       });
       setSkipped(result.skipped);
+      setWarnings(result.warnings || []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -100,8 +107,9 @@ export default function QuizForm() {
       available_until: form.available_until || null,
       time_limit_minutes: form.time_limit_minutes ? Number(form.time_limit_minutes) : null,
       max_attempts: form.unlimited_attempts ? null : Number(form.max_attempts),
+      shuffle_questions: form.shuffle_questions,
       status: publish ? 'published' : 'draft',
-      questions,
+      ...(locked ? {} : { questions }),
     };
 
     setSubmitting(true);
@@ -183,7 +191,30 @@ export default function QuizForm() {
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-[var(--color-line)] p-5 space-y-3">
+        <div className="bg-white rounded-2xl border border-[var(--color-line)] p-5">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.shuffle_questions}
+              onChange={(e) => setForm({ ...form, shuffle_questions: e.target.checked })}
+              className="accent-[var(--color-navy)] mt-1 w-4 h-4"
+            />
+            <span>
+              <span className="block text-sm font-medium text-[var(--color-ink)]">Shuffle the questions for each student</span>
+              <span className="block text-xs text-[var(--color-muted)] mt-0.5">
+                Every student gets the questions in a different order, which makes copying harder. Each student's questions are always numbered 1, 2, 3 in order, and their order stays the same if they refresh the page.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        {locked && (
+          <div className="bg-[var(--color-warn-soft)] text-[var(--color-warn)] rounded-2xl p-4 text-sm">
+            Students have already attempted this quiz, so its questions are locked. You can still change the title, dates, attempts, shuffling and whether it is published.
+          </div>
+        )}
+
+        <div className={`bg-white rounded-2xl border border-[var(--color-line)] p-5 space-y-3 ${locked ? 'hidden' : ''}`}>
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h2 className="font-display text-lg text-[var(--color-navy)]">Upload questions from Word</h2>
             <button type="button" onClick={() => api.downloadQuizTemplate()} className="text-xs font-medium text-[var(--color-navy)] hover:underline">
@@ -199,6 +230,12 @@ export default function QuizForm() {
               {parsing ? 'Reading document...' : 'Add questions from this file'}
             </Button>
           )}
+          {warnings.length > 0 && (
+            <div className="bg-[var(--color-warn-soft)] text-[var(--color-warn)] rounded-lg px-3 py-2 text-xs space-y-1">
+              <p className="font-medium">Please note:</p>
+              {warnings.map((w, i) => <p key={i}>• {w.reason}</p>)}
+            </div>
+          )}
           {skipped.length > 0 && (
             <div className="bg-[var(--color-warn-soft)] text-[var(--color-warn)] rounded-lg px-3 py-2 text-xs space-y-1">
               <p className="font-medium">{skipped.length} block{skipped.length > 1 ? 's' : ''} couldn't be read:</p>
@@ -209,7 +246,11 @@ export default function QuizForm() {
 
         <div>
           <h2 className="font-display text-lg text-[var(--color-navy)] mb-3">Questions</h2>
-          <QuestionEditor questions={questions} onChange={setQuestions} />
+          {locked ? (
+            <p className="text-sm text-[var(--color-muted)]">The {questions.length} question{questions.length === 1 ? '' : 's'} can't be changed any more.</p>
+          ) : (
+            <QuestionEditor questions={questions} onChange={setQuestions} />
+          )}
         </div>
 
         <div className="flex flex-wrap gap-3">

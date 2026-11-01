@@ -1,6 +1,8 @@
 const { query, withTransaction } = require('../config/db');
 const { parseQuizDocx } = require('../utils/docxQuizParser');
 const { generateQuizTemplate } = require('../utils/docxTemplateGenerator');
+const { uploadBuffer, deleteBlob } = require('../utils/blob');
+const { isAllowedImageUrl, detectImageType } = require('../utils/images');
 
 /**
  * List quizzes. Teachers see the ones they created (optionally filtered to
@@ -71,7 +73,8 @@ async function getQuiz(req, res) {
       'select * from quiz_questions where quiz_id = $1 order by order_index asc',
       [req.params.id]
     );
-    return res.json({ quiz, questions });
+    const attemptCount = await query('select count(*)::int as n from quiz_attempts where quiz_id = $1', [req.params.id]);
+    return res.json({ quiz, questions, has_attempts: attemptCount[0].n > 0 });
   }
 
   // student: must be their class, must be published
@@ -79,7 +82,7 @@ async function getQuiz(req, res) {
     return res.status(403).json({ error: 'This quiz is not available to you' });
   }
   const questions = await query(
-    'select id, quiz_id, order_index, question_text, question_type, options, points from quiz_questions where quiz_id = $1 order by order_index asc',
+    'select id, quiz_id, order_index, question_text, question_type, options, points, image_url from quiz_questions where quiz_id = $1 order by order_index asc',
     [req.params.id]
   );
   const attempts = await query(
@@ -98,6 +101,7 @@ function validateQuestions(questions) {
     if (!['multiple_choice', 'true_false', 'short_answer'].includes(q.question_type)) {
       return `Unrecognized question type: ${q.question_type}`;
     }
+    if (q.image_url && !isAllowedImageUrl(q.image_url)) return 'A question picture has an invalid address. Remove it and upload the picture again.';
     if (q.question_type === 'multiple_choice') {
       if (!Array.isArray(q.options) || q.options.length < 2) return 'Multiple choice questions need at least 2 options';
       if (!q.correct_answer || !q.options.includes(q.correct_answer)) {
@@ -112,7 +116,7 @@ function validateQuestions(questions) {
 }
 
 async function createQuiz(req, res) {
-  const { title, description, class_id, time_limit_minutes, available_from, available_until, max_attempts, status, questions } = req.body;
+  const { title, description, class_id, time_limit_minutes, available_from, available_until, max_attempts, shuffle_questions, status, questions } = req.body;
 
   if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required' });
   if (!class_id) return res.status(400).json({ error: 'class_id is required' });
@@ -127,8 +131,8 @@ async function createQuiz(req, res) {
   try {
     const result = await withTransaction(async (client) => {
       const quizRows = await client.query(
-        `insert into quizzes (title, description, class_id, teacher_id, time_limit_minutes, available_from, available_until, max_attempts, status)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `insert into quizzes (title, description, class_id, teacher_id, time_limit_minutes, available_from, available_until, max_attempts, shuffle_questions, status)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          returning *`,
         [
           title.trim(),
@@ -139,6 +143,7 @@ async function createQuiz(req, res) {
           available_from || null,
           available_until || null,
           max_attempts || null,
+          Boolean(shuffle_questions),
           status === 'published' ? 'published' : 'draft',
         ]
       );
@@ -147,8 +152,8 @@ async function createQuiz(req, res) {
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
         await client.query(
-          `insert into quiz_questions (quiz_id, order_index, question_text, question_type, options, correct_answer, points)
-           values ($1, $2, $3, $4, $5, $6, $7)`,
+          `insert into quiz_questions (quiz_id, order_index, question_text, question_type, options, correct_answer, points, image_url)
+           values ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
             quiz.id,
             i,
@@ -157,6 +162,7 @@ async function createQuiz(req, res) {
             q.question_type === 'short_answer' ? null : JSON.stringify(q.options),
             q.correct_answer || null,
             q.points || 1,
+            q.image_url || null,
           ]
         );
       }
@@ -178,7 +184,7 @@ async function updateQuiz(req, res) {
     return res.status(403).json({ error: 'You can only edit quizzes you created' });
   }
 
-  const { title, description, time_limit_minutes, available_from, available_until, max_attempts, status, questions } = req.body;
+  const { title, description, time_limit_minutes, available_from, available_until, max_attempts, shuffle_questions, status, questions } = req.body;
 
   const attemptRows = await query('select count(*) as count from quiz_attempts where quiz_id = $1', [req.params.id]);
   const hasAttempts = Number(attemptRows[0].count) > 0;
@@ -200,8 +206,10 @@ async function updateQuiz(req, res) {
   if (available_from !== undefined) update.available_from = available_from || null;
   if (available_until !== undefined) update.available_until = available_until || null;
   if (max_attempts !== undefined) update.max_attempts = max_attempts || null;
+  if (shuffle_questions !== undefined) update.shuffle_questions = Boolean(shuffle_questions);
   if (status !== undefined) update.status = status === 'published' ? 'published' : 'draft';
 
+  let oldImages = [];
   try {
     const result = await withTransaction(async (client) => {
       let quiz = existing;
@@ -218,12 +226,14 @@ async function updateQuiz(req, res) {
         const questionError = validateQuestions(questions);
         if (questionError) throw new Error(questionError);
 
+        const old = await client.query('select image_url from quiz_questions where quiz_id = $1 and image_url is not null', [req.params.id]);
+        oldImages = old.rows.map((r) => r.image_url);
         await client.query('delete from quiz_questions where quiz_id = $1', [req.params.id]);
         for (let i = 0; i < questions.length; i++) {
           const q = questions[i];
           await client.query(
-            `insert into quiz_questions (quiz_id, order_index, question_text, question_type, options, correct_answer, points)
-             values ($1, $2, $3, $4, $5, $6, $7)`,
+            `insert into quiz_questions (quiz_id, order_index, question_text, question_type, options, correct_answer, points, image_url)
+             values ($1, $2, $3, $4, $5, $6, $7, $8)`,
             [
               req.params.id,
               i,
@@ -232,6 +242,7 @@ async function updateQuiz(req, res) {
               q.question_type === 'short_answer' ? null : JSON.stringify(q.options),
               q.correct_answer || null,
               q.points || 1,
+              q.image_url || null,
             ]
           );
         }
@@ -240,6 +251,10 @@ async function updateQuiz(req, res) {
       return quiz;
     });
 
+    if (questions !== undefined && oldImages.length) {
+      const keep = new Set(questions.map((q) => q.image_url).filter(Boolean));
+      await Promise.all(oldImages.filter((u) => !keep.has(u)).map(deleteBlob));
+    }
     res.json({ quiz: result });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -252,7 +267,9 @@ async function deleteQuiz(req, res) {
   if (req.user.role !== 'admin' && rows[0].teacher_id !== req.user.id) {
     return res.status(403).json({ error: 'You can only delete quizzes you created' });
   }
+  const pictures = await query('select image_url from quiz_questions where quiz_id = $1 and image_url is not null', [req.params.id]);
   await query('delete from quizzes where id = $1', [req.params.id]);
+  await Promise.all(pictures.map((r) => deleteBlob(r.image_url)));
   res.json({ success: true });
 }
 
@@ -269,12 +286,40 @@ async function parseDocx(req, res) {
     return res.status(400).json({ error: 'Please upload a .docx file (Word document)' });
   }
 
+  let parsed;
   try {
-    const { questions, skipped } = await parseQuizDocx(req.file.buffer);
-    res.json({ questions, skipped });
+    parsed = await parseQuizDocx(req.file.buffer);
   } catch (error) {
-    res.status(400).json({ error: `Could not read that document: ${error.message}` });
+    return res.status(400).json({ error: `Could not read that document: ${error.message}` });
   }
+
+  // Pictures found in the document are stored so the teacher can see and edit them with the questions.
+  const warnings = [...parsed.warnings];
+  const questions = [];
+  for (const q of parsed.questions) {
+    const { image, ...rest } = q;
+    if (image) {
+      try {
+        const uploaded = await uploadBuffer(image.buffer, `question-picture.${image.extension}`, 'quiz-images');
+        rest.image_url = uploaded.url;
+      } catch (err) {
+        console.error('[quiz] picture upload failed', err.message);
+        warnings.push({ reason: `"${q.question_text.slice(0, 40)}": the picture could not be stored, so it was left out.` });
+      }
+    }
+    questions.push(rest);
+  }
+  res.json({ questions, skipped: parsed.skipped, warnings });
+}
+
+/** Stores one picture for a question and returns its address. Body: multipart, field "image". */
+async function uploadImage(req, res) {
+  if (!req.file) return res.status(400).json({ error: 'No picture was uploaded' });
+  const type = detectImageType(req.file.buffer);
+  if (!type) return res.status(400).json({ error: 'Please choose a PNG or JPEG picture' });
+  if (req.file.buffer.length > 4 * 1024 * 1024) return res.status(400).json({ error: 'That picture is larger than 4 MB' });
+  const uploaded = await uploadBuffer(req.file.buffer, `question-picture.${type}`, 'quiz-images');
+  res.status(201).json({ url: uploaded.url });
 }
 
 async function downloadTemplate(req, res) {
@@ -284,4 +329,4 @@ async function downloadTemplate(req, res) {
   res.send(Buffer.from(buffer));
 }
 
-module.exports = { listQuizzes, getQuiz, createQuiz, updateQuiz, deleteQuiz, parseDocx, downloadTemplate };
+module.exports = { listQuizzes, getQuiz, createQuiz, updateQuiz, deleteQuiz, parseDocx, uploadImage, downloadTemplate };

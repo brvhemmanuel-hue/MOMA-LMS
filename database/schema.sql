@@ -24,6 +24,9 @@ create table if not exists users (
   role text not null check (role in ('teacher', 'student', 'admin')),
   class_id uuid,                  -- students only; fk added after classes exists
   is_active boolean not null default true,
+  -- New teacher and student registrations start as 'pending' and cannot sign in until
+  -- the admin approves them. Everything seeded or created by the admin is 'approved'.
+  status text not null default 'approved' check (status in ('pending', 'approved')),
   created_at timestamptz not null default now()
 );
 
@@ -55,6 +58,7 @@ create table if not exists quizzes (
   available_from timestamptz,          -- null = available immediately
   available_until timestamptz,         -- null = no deadline
   max_attempts integer,                -- null = unlimited attempts; otherwise a positive integer
+  shuffle_questions boolean not null default false,  -- each student sees the questions in their own order
   status text not null default 'draft' check (status in ('draft', 'published')),
   created_at timestamptz not null default now()
 );
@@ -66,6 +70,7 @@ create table if not exists quiz_questions (
   question_text text not null,
   question_type text not null check (question_type in ('multiple_choice', 'true_false', 'short_answer')),
   options jsonb,                        -- ["Option A", "Option B", ...] for multiple_choice
+  image_url text,                       -- optional picture shown with the question (stored in Vercel Blob)
   correct_answer text,                  -- exact match target for auto-grading; null for short_answer
   points numeric(6,2) not null default 1
 );

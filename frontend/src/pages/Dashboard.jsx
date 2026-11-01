@@ -33,6 +33,10 @@ function StatCard({ label, value, tone = 'navy' }) {
 }
 
 function AdminDashboard() {
+  const [pendingCount, setPendingCount] = useState(0);
+  useEffect(() => {
+    api.pendingCount().then((d) => setPendingCount(d.count)).catch(() => {});
+  }, []);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
 
@@ -45,6 +49,14 @@ function AdminDashboard() {
 
   return (
     <div className="space-y-6">
+      {pendingCount > 0 && (
+        <Link to="/approvals" className="flex items-center justify-between gap-3 bg-[var(--color-gold-soft)] border border-[var(--color-gold)] rounded-2xl px-5 py-4 hover:brightness-95 transition">
+          <span className="text-sm font-medium text-[var(--color-gold-deep)]">
+            {pendingCount} new registration{pendingCount === 1 ? ' is' : 's are'} waiting for your approval
+          </span>
+          <span className="text-sm font-semibold text-[var(--color-navy)]">Review →</span>
+        </Link>
+      )}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         <StatCard label="Teachers" value={data.teacher_count} />
         <StatCard label="Students" value={data.student_count} />

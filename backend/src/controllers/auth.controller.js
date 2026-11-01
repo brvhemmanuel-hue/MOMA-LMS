@@ -46,19 +46,22 @@ async function register(req, res) {
   }
 
   const existing = await query('select id from users where email = $1', [email.trim().toLowerCase()]);
-  if (existing[0]) return res.status(409).json({ error: 'An account with this email already exists' });
+  if (existing[0]) return res.status(409).json({ error: 'An account with this email already exists or is waiting for approval' });
 
   const password_hash = await bcrypt.hash(password, 10);
 
   try {
     const rows = await query(
-      `insert into users (full_name, email, password_hash, role, class_id)
-       values ($1, $2, $3, $4, $5)
-       returning id, full_name, email, role, class_id, created_at`,
+      `insert into users (full_name, email, password_hash, role, class_id, status)
+       values ($1, $2, $3, $4, $5, 'pending')
+       returning id`,
       [full_name.trim(), email.trim().toLowerCase(), password_hash, role, resolvedClassId]
     );
-    const { token, user } = issueToken(rows[0]);
-    res.status(201).json({ token, user });
+    // No token: the account cannot be used until the admin approves it.
+    res.status(201).json({
+      pending: true,
+      message: 'Your registration has been received. The school administrator must approve your account before you can sign in.',
+    });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -79,6 +82,12 @@ async function login(req, res) {
 
   const matches = await bcrypt.compare(password, user.password_hash);
   if (!matches) return res.status(401).json({ error: 'Invalid email or password' });
+
+  if (user.status === 'pending') {
+    return res.status(403).json({
+      error: 'Your account is waiting for approval by the school administrator. You will be able to sign in as soon as it is approved.',
+    });
+  }
 
   const { token, user: payload } = issueToken(user);
   res.json({ token, user: payload });

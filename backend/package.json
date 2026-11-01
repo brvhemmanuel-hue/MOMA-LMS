@@ -20,6 +20,7 @@
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.8.0",
     "multer": "^2.4.0",
+    "pdfkit": "^0.17.0",
     "ws": "^8.18.0"
   },
   "engines": {

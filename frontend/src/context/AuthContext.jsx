@@ -28,10 +28,8 @@ export function AuthProvider({ children }) {
   }
 
   async function register(payload) {
-    const data = await api.register(payload);
-    api.setToken(data.token);
-    setUser(data.user);
-    return data.user;
+    // New accounts wait for the admin's approval, so there is no sign-in yet.
+    return api.register(payload);
   }
 
   function logout() {

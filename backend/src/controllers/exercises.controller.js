@@ -212,7 +212,7 @@ async function exportGrades(req, res) {
     `select u.full_name, u.email, s.grade, s.submitted_at, s.file_name
      from users u
      left join exercise_submissions s on s.student_id = u.id and s.exercise_id = $1
-     where u.role = 'student' and u.class_id = $2
+     where u.role = 'student' and u.status = 'approved' and u.class_id = $2
      order by u.full_name asc`,
     [req.params.id, exercise.class_id]
   );

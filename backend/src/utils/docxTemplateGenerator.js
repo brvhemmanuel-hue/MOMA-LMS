@@ -1,4 +1,8 @@
-const { Document, Packer, Paragraph, TextRun, HeadingLevel } = require('docx');
+const fs = require('fs');
+const path = require('path');
+const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } = require('docx');
+
+const EXAMPLE_IMAGE = fs.readFileSync(path.join(__dirname, '..', 'assets', 'template-example.png'));
 
 /**
  * Builds the .docx quiz template teachers download, fill in, and re-upload.
@@ -29,7 +33,7 @@ async function generateQuizTemplate() {
           note(
             'Fill in your questions below, following the pattern shown in the examples. Each question starts with a line beginning "Q:". When you\'re done, save this file and upload it when creating a quiz.',
           ),
-          note('Question types: MCQ (multiple choice), TRUEFALSE, or SHORT (short answer, graded by you afterwards).', { italics: true }),
+          note('Question types: MCQ (multiple choice), TRUEFALSE, or SHORT (short answer, graded by you afterwards). Any question can also have a picture (see Example 4).', { italics: true }),
 
           heading('Example 1: Multiple choice'),
           line('Q: What is the capital of Ghana?'),
@@ -53,6 +57,22 @@ async function generateQuizTemplate() {
           line('Q: Explain photosynthesis in one sentence.'),
           line('TYPE: SHORT'),
           line('POINTS: 3'),
+          spacer(),
+
+          heading('Example 4: Question with a picture'),
+          line('Q: Use the triangle below to answer. What is the length of the side AC?'),
+          new Paragraph({
+            children: [new ImageRun({ type: 'png', data: EXAMPLE_IMAGE, transformation: { width: 280, height: 160 } })],
+            spacing: { before: 60, after: 80 },
+          }),
+          line('TYPE: MCQ'),
+          line('A) 7 cm'),
+          line('B) 13 cm'),
+          line('C) 17 cm'),
+          line('D) 60 cm'),
+          line('ANSWER: B'),
+          line('POINTS: 2'),
+          note('To add a picture to any question, put the cursor on a new line directly under its "Q:" line and use Insert > Pictures. Use PNG or JPEG pictures, one per question.', { italics: true }),
           spacer(),
 
           heading('Your questions start here - replace everything below'),

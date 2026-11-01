@@ -70,6 +70,15 @@ export const api = {
   createQuiz: (body) => request('/api/quizzes', { method: 'POST', body }),
   updateQuiz: (id, body) => request(`/api/quizzes/${id}`, { method: 'PUT', body }),
   deleteQuiz: (id) => request(`/api/quizzes/${id}`, { method: 'DELETE' }),
+  uploadQuestionImage: (file) => {
+    const form = new FormData();
+    form.append('image', file);
+    return request('/api/quizzes/upload-image', { method: 'POST', body: form, isForm: true });
+  },
+  async downloadAttemptPdf(quizId, attemptId, filename) {
+    const blob = await request(`/api/quizzes/${quizId}/attempts/${attemptId}/pdf`, { responseType: 'blob' });
+    downloadBlob(blob, filename);
+  },
   parseQuizDocx: (file) => {
     const form = new FormData();
     form.append('file', file);
@@ -121,6 +130,10 @@ export const api = {
   deleteStudent: (id) => request(`/api/users/students/${id}`, { method: 'DELETE' }),
   studentReport: (id) => request(`/api/users/students/${id}/report`),
   listTeachers: () => request('/api/users/teachers'),
+  pendingUsers: () => request('/api/users/pending'),
+  pendingCount: () => request('/api/users/pending/count'),
+  approveUser: (id) => request(`/api/users/${id}/approve`, { method: 'POST' }),
+  rejectUser: (id) => request(`/api/users/${id}/reject`, { method: 'DELETE' }),
   updateTeacher: (id, body) => request(`/api/users/teachers/${id}`, { method: 'PUT', body }),
   deleteTeacher: (id) => request(`/api/users/teachers/${id}`, { method: 'DELETE' }),
 };

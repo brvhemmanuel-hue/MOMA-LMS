@@ -17,6 +17,7 @@ import Materials from './pages/Materials';
 import Students from './pages/Students';
 import StudentReport from './pages/StudentReport';
 import Teachers from './pages/Teachers';
+import Approvals from './pages/Approvals';
 import Settings from './pages/Settings';
 import NotFound from './pages/NotFound';
 
@@ -41,6 +42,7 @@ export default function App() {
 
           <Route path="/students" element={<ProtectedRoute roles={['teacher', 'admin']}><Students /></ProtectedRoute>} />
           <Route path="/students/:id/report" element={<ProtectedRoute roles={['teacher', 'admin']}><StudentReport /></ProtectedRoute>} />
+          <Route path="/approvals" element={<ProtectedRoute roles={['admin']}><Approvals /></ProtectedRoute>} />
           <Route path="/teachers" element={<ProtectedRoute roles={['admin']}><Teachers /></ProtectedRoute>} />
 
           <Route path="/quizzes" element={<ProtectedRoute><Quizzes /></ProtectedRoute>} />

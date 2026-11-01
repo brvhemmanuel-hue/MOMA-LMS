@@ -1,0 +1,13 @@
+-- Adds (1) the "shuffle questions" option on quizzes, (2) admin approval of new accounts,
+-- and (3) pictures on quiz questions.
+-- Only needed if you already have a live database: run this once in the Neon SQL editor
+-- BEFORE deploying the new code. Fresh installs get all three from schema.sql and do not
+-- need this file. Safe to run more than once. Every existing account stays approved.
+
+alter table quizzes add column if not exists shuffle_questions boolean not null default false;
+
+alter table users add column if not exists status text not null default 'approved';
+alter table users drop constraint if exists users_status_check;
+alter table users add constraint users_status_check check (status in ('pending', 'approved'));
+
+alter table quiz_questions add column if not exists image_url text;

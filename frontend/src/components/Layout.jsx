@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../api/client';
 import useDocumentTitle from '../hooks/useDocumentTitle';
 
 const TEACHER_NAV = [
@@ -21,6 +22,7 @@ const STUDENT_NAV = [
 
 const ADMIN_NAV = [
   { to: '/', label: 'Dashboard', icon: DashboardIcon, end: true },
+  { to: '/approvals', label: 'Approvals', icon: ApprovalsIcon },
   { to: '/students', label: 'Students', icon: StudentsIcon },
   { to: '/teachers', label: 'Teachers', icon: TeachersIcon },
   { to: '/classes', label: 'Classes', icon: ClassIcon },
@@ -36,6 +38,24 @@ export default function Layout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [pending, setPending] = useState(0); // registrations waiting for the admin
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return undefined;
+    let alive = true;
+    const refresh = () => api.pendingCount().then((d) => alive && setPending(d.count)).catch(() => {});
+    refresh();
+    window.addEventListener('moma:pending-changed', refresh);
+    return () => {
+      alive = false;
+      window.removeEventListener('moma:pending-changed', refresh);
+    };
+  }, [user?.role, location.pathname]);
+
+  const badge = (item) =>
+    item.to === '/approvals' && pending > 0 ? (
+      <span className="ml-1.5 inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-[var(--color-gold)] text-[var(--color-navy-deep)] text-[10px] font-bold">{pending}</span>
+    ) : null;
   useDocumentTitle();
 
   useEffect(() => {
@@ -76,7 +96,7 @@ export default function Layout({ children }) {
               }
             >
               <item.icon className="w-5 h-5 shrink-0" />
-              {item.label}
+              {item.label}{badge(item)}
             </NavLink>
           ))}
           <NavLink
@@ -134,7 +154,7 @@ export default function Layout({ children }) {
               }
             >
               <item.icon className="w-5 h-5 shrink-0" />
-              <span>{item.label}</span>
+              <span>{item.label}{badge(item)}</span>
             </NavLink>
           ))}
           <button onClick={() => setMenuOpen(true)} className="flex-1 flex flex-col items-center justify-center gap-1 h-14 text-[10px] font-medium leading-none text-[var(--color-muted)]">
@@ -172,7 +192,7 @@ export default function Layout({ children }) {
                   }
                 >
                   <item.icon className="w-5 h-5 shrink-0" />
-                  {item.label}
+                  {item.label}{badge(item)}
                 </NavLink>
               ))}
               <NavLink
@@ -258,6 +278,13 @@ function SettingsIcon(props) {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+function ApprovalsIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M16 11l2 2 4-4" />
     </svg>
   );
 }

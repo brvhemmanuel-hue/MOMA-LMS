@@ -37,7 +37,7 @@ async function listStudents(req, res) {
     }
   }
 
-  const conditions = [`u.role = 'student'`];
+  const conditions = [`u.role = 'student'`, `u.status = 'approved'`];
   const params = [];
   if (class_id) {
     params.push(class_id);
@@ -130,7 +130,7 @@ async function listTeachers(req, res) {
             (select count(*) from exercises where teacher_id = u.id) as exercise_count,
             (select count(*) from materials where teacher_id = u.id) as material_count
      from users u
-     where u.role = 'teacher'
+     where u.role = 'teacher' and u.status = 'approved'
      order by u.full_name asc`
   );
   res.json({ teachers: rows });
@@ -233,4 +233,40 @@ async function deleteTeacher(req, res) {
   res.json({ success: true });
 }
 
-module.exports = { listStudents, updateStudent, deleteStudent, listTeachers, updateTeacher, deleteTeacher, studentReport, teacherClassIds };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Admin only: registrations waiting to be approved. */
+async function listPending(req, res) {
+  const rows = await query(
+    `select u.id, u.full_name, u.email, u.role, u.class_id, u.created_at, c.name as class_name
+     from users u left join classes c on c.id = u.class_id
+     where u.status = 'pending'
+     order by u.created_at asc`
+  );
+  res.json({ pending: rows });
+}
+
+async function pendingCount(req, res) {
+  const rows = await query("select count(*)::int as count from users where status = 'pending'");
+  res.json({ count: rows[0].count });
+}
+
+async function approveUser(req, res) {
+  if (!UUID.test(req.params.id)) return res.status(404).json({ error: 'That registration was not found' });
+  const rows = await query(
+    "update users set status = 'approved' where id = $1 and status = 'pending' and role in ('teacher', 'student') returning id, full_name, email, role",
+    [req.params.id]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'That registration was not found, or has already been handled' });
+  res.json({ user: rows[0] });
+}
+
+/** Rejecting removes the registration, so the person can register again with corrected details. */
+async function rejectUser(req, res) {
+  if (!UUID.test(req.params.id)) return res.status(404).json({ error: 'That registration was not found' });
+  const rows = await query("delete from users where id = $1 and status = 'pending' and role in ('teacher', 'student') returning id", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'That registration was not found, or has already been handled' });
+  res.json({ success: true });
+}
+
+module.exports = { listPending, pendingCount, approveUser, rejectUser, listStudents, updateStudent, deleteStudent, listTeachers, updateTeacher, deleteTeacher, studentReport, teacherClassIds };

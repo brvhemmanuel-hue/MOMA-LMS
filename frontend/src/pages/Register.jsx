@@ -14,6 +14,7 @@ export default function Register() {
   const [form, setForm] = useState({ full_name: '', email: '', password: '', class_id: '' });
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
 
   useEffect(() => {
     document.title = 'Create account - MOMA LMS';
@@ -34,7 +35,7 @@ export default function Register() {
     setSubmitting(true);
     try {
       await register({ ...form, role });
-      navigate('/');
+      setDone(true);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -62,6 +63,19 @@ export default function Register() {
           <p className="text-xs tracking-[0.3em] uppercase text-[var(--color-gold)] mt-1">MOMA LMS</p>
         </div>
 
+        {done ? (
+          <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 text-center space-y-4">
+            <div className="w-14 h-14 rounded-full bg-[var(--color-gold-soft)] text-[var(--color-gold-deep)] flex items-center justify-center mx-auto text-2xl font-bold">✓</div>
+            <h2 className="font-display text-xl text-[var(--color-navy)]">Registration received</h2>
+            <p className="text-sm text-[var(--color-ink-soft)]">
+              Thank you, {form.full_name.split(' ')[0]}. The school administrator needs to approve your {role} account before you can sign in.
+              Please check back a little later and sign in once it has been approved.
+            </p>
+            <Link to="/login" className="inline-block rounded-lg bg-[var(--color-navy)] text-white text-sm font-medium px-5 py-2.5 hover:bg-[var(--color-navy-deep)] transition-colors">
+              Back to sign in
+            </Link>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 space-y-4">
           <div>
             <h2 className="font-display text-lg text-[var(--color-navy)]">Create your account</h2>
@@ -121,6 +135,7 @@ export default function Register() {
             </Link>
           </p>
         </form>
+        )}
       </div>
     </div>
   );
