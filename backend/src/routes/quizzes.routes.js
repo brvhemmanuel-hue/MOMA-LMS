@@ -19,6 +19,7 @@ router.post('/', requireRole('teacher'), asyncHandler(ctrl.createQuiz));
 router.get('/:id', asyncHandler(ctrl.getQuiz));
 router.put('/:id', requireRole('teacher', 'admin'), asyncHandler(ctrl.updateQuiz));
 router.delete('/:id', requireRole('teacher', 'admin'), asyncHandler(ctrl.deleteQuiz));
+router.post('/:id/reset-timer', requireRole('teacher', 'admin'), asyncHandler(ctrl.resetTimer));
 
 router.post('/:id/attempts', requireRole('student'), asyncHandler(attempts.startAttempt));
 router.post('/:id/attempts/submit', requireRole('student'), asyncHandler(attempts.submitAttempt));

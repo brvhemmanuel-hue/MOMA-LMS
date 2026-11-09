@@ -60,6 +60,8 @@ export default function QuizGradebook() {
         </div>
       </div>
 
+      {quiz.shared_timer && <ClockPanel quizId={id} quiz={quiz} />}
+
       <div className="grid grid-cols-3 gap-4">
         <div className="bg-white rounded-2xl border border-[var(--color-line)] p-4">
           <p className="text-xs uppercase text-[var(--color-muted)]">Students</p>
@@ -215,6 +217,52 @@ function GradingPanel({ quizId, student, onClose, onGraded }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Shows the shared clock's state and lets the teacher reset it for a new sitting. */
+function ClockPanel({ quizId, quiz }) {
+  const [startedAt, setStartedAt] = useState(quiz.timer_started_at);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const limitMs = (quiz.time_limit_minutes || 0) * 60000;
+  const time = (d) => new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const endsAt = startedAt ? new Date(new Date(startedAt).getTime() + limitMs) : null;
+  const ended = endsAt && endsAt.getTime() <= Date.now();
+
+  async function reset() {
+    if (!confirm('Reset the shared clock? The next student to start will begin a fresh sitting with the full time. Attempts already in progress are not affected.')) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api.resetQuizTimer(quizId);
+      setStartedAt(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-[var(--color-line)] p-4 flex items-center justify-between gap-3 flex-wrap">
+      <div className="text-sm">
+        <p className="font-medium text-[var(--color-navy)]">Shared clock ({quiz.time_limit_minutes} minutes)</p>
+        <p className="text-xs text-[var(--color-muted)] mt-0.5">
+          {!startedAt
+            ? 'Not started. It starts when the first student begins, and everyone then finishes at the same time.'
+            : ended
+            ? `Started at ${time(startedAt)} and ended at ${time(endsAt)}. Nobody can start until you reset it.`
+            : `Started at ${time(startedAt)} and ends at ${time(endsAt)}. Students who start now only get the time that is left.`}
+        </p>
+        {error && <p className="text-xs text-[var(--color-bad)] mt-1">{error}</p>}
+      </div>
+      {startedAt && (
+        <button onClick={reset} disabled={busy} className="text-xs font-medium border border-[var(--color-line)] rounded-lg px-3 py-2 hover:bg-[var(--color-bg)] transition-colors disabled:opacity-60">
+          {busy ? 'Resetting...' : 'Reset clock for a new sitting'}
+        </button>
+      )}
     </div>
   );
 }

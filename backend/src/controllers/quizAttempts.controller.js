@@ -14,6 +14,15 @@ function withinWindow(quiz) {
   return null;
 }
 
+/** Milliseconds left for an attempt (null when the quiz is untimed). Can be zero or negative. */
+function remainingMs(attempt, quiz) {
+  if (!quiz.time_limit_minutes) return null;
+  const deadline = attempt.deadline_at
+    ? new Date(attempt.deadline_at).getTime()
+    : new Date(attempt.started_at).getTime() + quiz.time_limit_minutes * 60000;
+  return deadline - Date.now();
+}
+
 /**
  * Starts a new attempt, or resumes an in-progress one. Enforces
  * max_attempts and the quiz's availability window - but only when
@@ -43,7 +52,7 @@ async function startAttempt(req, res) {
       'select id, order_index, question_text, question_type, options, points, image_url from quiz_questions where quiz_id = $1 order by order_index asc',
       [req.params.id]
     );
-    return res.json({ attempt: inProgress, questions: orderForAttempt(questions, inProgress.id, quiz.shuffle_questions), resumed: true });
+    return res.json({ attempt: inProgress, questions: orderForAttempt(questions, inProgress.id, quiz.shuffle_questions), resumed: true, remaining_ms: remainingMs(inProgress, quiz) });
   }
 
   // Only a fresh attempt is subject to the window and attempt-limit checks.
@@ -54,9 +63,32 @@ async function startAttempt(req, res) {
     return res.status(403).json({ error: `You have used all ${quiz.max_attempts} attempt${quiz.max_attempts > 1 ? 's' : ''} for this quiz.` });
   }
 
+  // The deadline for this attempt. Normally it is the student's own start time plus the limit.
+  // With a shared clock it is set by whoever starts first, so a student who begins later only
+  // gets the time that is left, and cannot start at all once the time has run out.
+  let deadline = null;
+  if (quiz.time_limit_minutes) {
+    const limitMs = quiz.time_limit_minutes * 60000;
+    if (quiz.shared_timer) {
+      // One atomic statement: the first student to get here starts the clock, everyone else reads it.
+      const clock = await query(
+        'update quizzes set timer_started_at = coalesce(timer_started_at, now()) where id = $1 returning timer_started_at',
+        [req.params.id]
+      );
+      deadline = new Date(new Date(clock[0].timer_started_at).getTime() + limitMs);
+      if (deadline.getTime() <= Date.now()) {
+        return res.status(403).json({
+          error: 'The time for this quiz has ended. Everyone sits it on the same clock, so it can no longer be started. Ask your teacher if you need another chance.',
+        });
+      }
+    } else {
+      deadline = new Date(Date.now() + limitMs);
+    }
+  }
+
   const attemptRows = await query(
-    `insert into quiz_attempts (quiz_id, student_id, attempt_number) values ($1, $2, $3) returning *`,
-    [req.params.id, req.user.id, existingAttempts.length + 1]
+    `insert into quiz_attempts (quiz_id, student_id, attempt_number, deadline_at) values ($1, $2, $3, $4) returning *`,
+    [req.params.id, req.user.id, existingAttempts.length + 1, deadline]
   );
 
   const questions = await query(
@@ -64,7 +96,7 @@ async function startAttempt(req, res) {
     [req.params.id]
   );
 
-  res.status(201).json({ attempt: attemptRows[0], questions: orderForAttempt(questions, attemptRows[0].id, quiz.shuffle_questions), resumed: false });
+  res.status(201).json({ attempt: attemptRows[0], questions: orderForAttempt(questions, attemptRows[0].id, quiz.shuffle_questions), resumed: false, remaining_ms: remainingMs(attemptRows[0], quiz) });
 }
 
 function answersMatch(given, correct) {

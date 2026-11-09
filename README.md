@@ -36,7 +36,18 @@ Password: admin123
 
 ---
 
+## Accounts and approval
+
+Anyone can register as a teacher or a student, but **nobody can sign in until the admin approves the account**. New registrations appear under **Approvals** (the admin sees a gold count on the menu and a banner on the dashboard), where the admin can approve or reject each one. A rejected person can simply register again with corrected details.
+
 ## Quiz features
+
+- **One question per page** - students move with Previous and Next, see how many they have answered, and can jump to any question. A confirmation shows any unanswered questions before they submit. Answers are saved in the browser as they go, so a refresh does not lose them.
+- **Shuffled questions (optional)** - each student gets the questions in their own order, but their numbers always run 1, 2, 3 in sequence. The order is fixed for an attempt, so it survives a refresh and matches the review screen and the PDF.
+- **Pictures in questions** - attach a PNG or JPEG to any question while building the quiz, or put the picture straight into the Word template. Large photos are shrunk automatically before they upload.
+- **Shared quiz clock (optional)** - for timed quizzes the teacher can make everyone share one clock. The timer starts when the first student begins, a student who starts later only gets the time that is left, and nobody can start once it has run out. The results page shows the clock and has a "Reset clock for a new sitting" button. Without this option every student still gets their own full time.
+- **Read-only copy mode (optional)** - when switched on for a quiz, students get a "Read-only (copy)" view that lists every question with its answer choices as plain text, with a copy button for each question and one for the whole quiz (the correct answers are never shown). When it is off, selecting and copying the quiz text is blocked. This is a deterrent in the browser, not a guarantee: a determined student can still photograph the screen.
+- **Results PDF for students** - after submitting, a student can download a PDF with the school crest and name, their own name, the quiz title, their score, and every question with their answer and the correct answer marked.
 
 - **Manual question builder** - multiple choice, true/false, or short answer, with per-question points.
 - **Upload questions from Word** - download a template, fill it in, upload it; questions are parsed and dropped straight into the (still editable) question list. Anything the parser couldn't understand is flagged with a clear reason, not silently dropped.

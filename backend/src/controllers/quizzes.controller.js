@@ -89,7 +89,19 @@ async function getQuiz(req, res) {
     'select * from quiz_attempts where quiz_id = $1 and student_id = $2 order by attempt_number desc',
     [req.params.id, req.user.id]
   );
-  res.json({ quiz, questions, attempts });
+  const limitMs = quiz.time_limit_minutes ? quiz.time_limit_minutes * 60000 : 0;
+  const clockRunning = Boolean(quiz.shared_timer && limitMs && quiz.timer_started_at);
+  res.json({
+    quiz,
+    questions,
+    attempts,
+    // Lets the student see, before starting, that a shared clock is already running (or has ended).
+    timer: {
+      shared: Boolean(quiz.shared_timer && limitMs),
+      running: clockRunning,
+      remaining_ms: clockRunning ? new Date(quiz.timer_started_at).getTime() + limitMs - Date.now() : null,
+    },
+  });
 }
 
 function validateQuestions(questions) {
@@ -116,8 +128,11 @@ function validateQuestions(questions) {
 }
 
 async function createQuiz(req, res) {
-  const { title, description, class_id, time_limit_minutes, available_from, available_until, max_attempts, shuffle_questions, status, questions } = req.body;
+  const { title, description, class_id, time_limit_minutes, available_from, available_until, max_attempts, shuffle_questions, allow_copy, shared_timer, status, questions } = req.body;
 
+  if (shared_timer && !(Number(time_limit_minutes) > 0)) {
+    return res.status(400).json({ error: 'Set a time limit before sharing one clock between students.' });
+  }
   if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required' });
   if (!class_id) return res.status(400).json({ error: 'class_id is required' });
 
@@ -131,8 +146,8 @@ async function createQuiz(req, res) {
   try {
     const result = await withTransaction(async (client) => {
       const quizRows = await client.query(
-        `insert into quizzes (title, description, class_id, teacher_id, time_limit_minutes, available_from, available_until, max_attempts, shuffle_questions, status)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `insert into quizzes (title, description, class_id, teacher_id, time_limit_minutes, available_from, available_until, max_attempts, shuffle_questions, allow_copy, shared_timer, status)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          returning *`,
         [
           title.trim(),
@@ -144,6 +159,8 @@ async function createQuiz(req, res) {
           available_until || null,
           max_attempts || null,
           Boolean(shuffle_questions),
+          Boolean(allow_copy),
+          Boolean(shared_timer),
           status === 'published' ? 'published' : 'draft',
         ]
       );
@@ -184,7 +201,13 @@ async function updateQuiz(req, res) {
     return res.status(403).json({ error: 'You can only edit quizzes you created' });
   }
 
-  const { title, description, time_limit_minutes, available_from, available_until, max_attempts, shuffle_questions, status, questions } = req.body;
+  const { title, description, time_limit_minutes, available_from, available_until, max_attempts, shuffle_questions, allow_copy, shared_timer, status, questions } = req.body;
+
+  const effectiveLimit = time_limit_minutes !== undefined ? time_limit_minutes : existing.time_limit_minutes;
+  const effectiveShared = shared_timer !== undefined ? Boolean(shared_timer) : existing.shared_timer;
+  if (effectiveShared && !(Number(effectiveLimit) > 0)) {
+    return res.status(400).json({ error: 'Set a time limit before sharing one clock between students.' });
+  }
 
   const attemptRows = await query('select count(*) as count from quiz_attempts where quiz_id = $1', [req.params.id]);
   const hasAttempts = Number(attemptRows[0].count) > 0;
@@ -207,6 +230,13 @@ async function updateQuiz(req, res) {
   if (available_until !== undefined) update.available_until = available_until || null;
   if (max_attempts !== undefined) update.max_attempts = max_attempts || null;
   if (shuffle_questions !== undefined) update.shuffle_questions = Boolean(shuffle_questions);
+  if (allow_copy !== undefined) update.allow_copy = Boolean(allow_copy);
+  if (shared_timer !== undefined) update.shared_timer = Boolean(shared_timer);
+  // Changing the time limit or switching the shared clock on or off starts the clock afresh.
+  if ((shared_timer !== undefined && Boolean(shared_timer) !== existing.shared_timer) ||
+      (time_limit_minutes !== undefined && (time_limit_minutes || null) !== existing.time_limit_minutes)) {
+    update.timer_started_at = null;
+  }
   if (status !== undefined) update.status = status === 'published' ? 'published' : 'draft';
 
   let oldImages = [];
@@ -312,6 +342,17 @@ async function parseDocx(req, res) {
   res.json({ questions, skipped: parsed.skipped, warnings });
 }
 
+/** Starts the shared quiz clock afresh, for a new sitting. */
+async function resetTimer(req, res) {
+  const rows = await query('select teacher_id from quizzes where id = $1', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'Quiz not found' });
+  if (req.user.role !== 'admin' && rows[0].teacher_id !== req.user.id) {
+    return res.status(403).json({ error: 'You can only reset the clock on quizzes you created' });
+  }
+  await query('update quizzes set timer_started_at = null where id = $1', [req.params.id]);
+  res.json({ success: true });
+}
+
 /** Stores one picture for a question and returns its address. Body: multipart, field "image". */
 async function uploadImage(req, res) {
   if (!req.file) return res.status(400).json({ error: 'No picture was uploaded' });
@@ -329,4 +370,4 @@ async function downloadTemplate(req, res) {
   res.send(Buffer.from(buffer));
 }
 
-module.exports = { listQuizzes, getQuiz, createQuiz, updateQuiz, deleteQuiz, parseDocx, uploadImage, downloadTemplate };
+module.exports = { listQuizzes, getQuiz, createQuiz, updateQuiz, deleteQuiz, resetTimer, parseDocx, uploadImage, downloadTemplate };

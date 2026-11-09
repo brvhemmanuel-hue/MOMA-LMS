@@ -21,6 +21,8 @@ export default function QuizTake() {
   const [activeAttempt, setActiveAttempt] = useState(null); // the in-progress attempt being taken right now
   const [lastResult, setLastResult] = useState(null); // most recently submitted attempt, shown as a result screen
   const [reviewing, setReviewing] = useState(false);
+  const [timer, setTimer] = useState(null); // the shared clock's state, as reported by the server
+  const [expiresAt, setExpiresAt] = useState(null); // when this attempt must be finished
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [starting, setStarting] = useState(false);
@@ -45,6 +47,7 @@ export default function QuizTake() {
         setQuiz(d.quiz);
         setQuestions(d.questions);
         setPastAttempts(d.attempts || []);
+        setTimer(d.timer || null);
         document.title = `${d.quiz.title} - MOMA LMS`;
       })
       .catch((e) => setError(e.message))
@@ -58,6 +61,8 @@ export default function QuizTake() {
       const data = await api.startQuizAttempt(id);
       setActiveAttempt(data.attempt);
       setQuestions(data.questions); // already in this attempt's order
+      // The server says how much time is left, so a late starter on a shared clock gets only what remains.
+      setExpiresAt(data.remaining_ms == null ? null : new Date(Date.now() + data.remaining_ms));
       setLastResult(null);
     } catch (err) {
       setError(err.message);
@@ -100,7 +105,7 @@ export default function QuizTake() {
 
   // ---- Taking the quiz right now ----
   if (activeAttempt) {
-    return <TakingQuiz key={activeAttempt.id} quiz={quiz} attempt={activeAttempt} questions={questions} onSubmit={handleSubmit} submitting={submitting} error={error} />;
+    return <TakingQuiz key={activeAttempt.id} quiz={quiz} attempt={activeAttempt} questions={questions} expiresAt={expiresAt} onSubmit={handleSubmit} submitting={submitting} error={error} />;
   }
 
   // ---- Reviewing past attempt(s). Checked before the "just submitted" screen, because that
@@ -143,6 +148,8 @@ export default function QuizTake() {
   const outOfAttempts = quiz.max_attempts && attemptsUsed >= quiz.max_attempts;
   const notYetOpen = quiz.available_from && !isPast(quiz.available_from);
   const closed = isPast(quiz.available_until);
+  const clockEnded = Boolean(timer?.shared && timer.running && timer.remaining_ms <= 0);
+  const clockRunning = Boolean(timer?.shared && timer.running && timer.remaining_ms > 0);
   const bestAttempt = pastAttempts.reduce((best, a) => (a.score !== null && (!best || a.score > best.score) ? a : best), null);
 
   return (
@@ -155,6 +162,16 @@ export default function QuizTake() {
         <div className="flex justify-between"><span className="text-[var(--color-muted)]">Time limit</span><span>{quiz.time_limit_minutes ? `${quiz.time_limit_minutes} minutes` : 'Untimed'}</span></div>
         <div className="flex justify-between"><span className="text-[var(--color-muted)]">Attempts</span><span>{quiz.max_attempts ? `${attemptsUsed} of ${quiz.max_attempts} used` : `${attemptsUsed} so far (unlimited)`}</span></div>
         {quiz.available_until && <div className="flex justify-between"><span className="text-[var(--color-muted)]">Closes</span><span>{formatDateTime(quiz.available_until)}</span></div>}
+        {timer?.shared && (
+          <p className="text-xs text-[var(--color-warn)] bg-[var(--color-warn-soft)] rounded-lg px-3 py-2">
+            Everyone sits this quiz on one shared clock.{' '}
+            {clockEnded
+              ? 'The time has ended, so it can no longer be started.'
+              : clockRunning
+              ? `It is already running, with about ${Math.max(1, Math.ceil(timer.remaining_ms / 60000))} minute(s) left. If you start now you only get the time that remains.`
+              : 'It starts when the first student begins, and everyone finishes at the same time.'}
+          </p>
+        )}
         <p className="text-xs text-[var(--color-muted)] pt-1">You will see one question at a time and can move back and forward before you submit.</p>
       </div>
 
@@ -169,6 +186,8 @@ export default function QuizTake() {
 
       {closed ? (
         <Badge tone="bad">This quiz is closed</Badge>
+      ) : clockEnded ? (
+        <Badge tone="bad">The time for this quiz has ended</Badge>
       ) : notYetOpen ? (
         <Badge tone="muted">Opens {formatDateTime(quiz.available_from)}</Badge>
       ) : outOfAttempts ? (
@@ -226,7 +245,7 @@ function PdfButton({ quizId, attemptId, quizTitle, variant = 'gold' }) {
  * when the teacher turned shuffling on). Answers are kept in the browser as the
  * student goes, so a refresh or a dropped connection does not lose them.
  */
-function TakingQuiz({ quiz, attempt, questions, onSubmit, submitting, error }) {
+function TakingQuiz({ quiz, attempt, questions, expiresAt, onSubmit, submitting, error }) {
   const storageKey = attemptKey(attempt.id);
   const [state, setState] = useState(() => {
     try {
@@ -245,6 +264,10 @@ function TakingQuiz({ quiz, attempt, questions, onSubmit, submitting, error }) {
   });
   const { answers, selectedIndex, current } = state;
   const [confirming, setConfirming] = useState(false);
+  const [readOnly, setReadOnly] = useState(false);
+  const allowCopy = Boolean(quiz.allow_copy);
+  // When copying is not allowed, selecting, copying and the right-click menu are blocked (typing in the answer box still works).
+  const guard = allowCopy ? undefined : (e) => { if (e.target.tagName !== 'TEXTAREA') e.preventDefault(); };
 
   useEffect(() => {
     try {
@@ -259,10 +282,6 @@ function TakingQuiz({ quiz, attempt, questions, onSubmit, submitting, error }) {
   const submitRef = useRef(onSubmit);
   submitRef.current = onSubmit;
   const onExpire = useCallback(() => submitRef.current(answersRef.current), []);
-  const expiresAt = useMemo(
-    () => (quiz.time_limit_minutes ? new Date(new Date(attempt.started_at).getTime() + quiz.time_limit_minutes * 60000) : null),
-    [quiz.time_limit_minutes, attempt.started_at]
-  );
 
   const total = questions.length;
   const q = questions[current];
@@ -283,12 +302,18 @@ function TakingQuiz({ quiz, attempt, questions, onSubmit, submitting, error }) {
   const isLast = current === total - 1;
 
   return (
-    <div className="space-y-5 max-w-2xl">
+    <div className={`space-y-5 max-w-2xl ${allowCopy ? '' : 'select-none'}`} onCopy={guard} onCut={guard} onContextMenu={guard} onDragStart={guard}>
       <div className="sticky top-0 z-10 bg-[var(--color-bg)] pt-2 pb-3 -mx-1 px-1 space-y-2">
         <div className="flex items-center justify-between gap-3">
           <h1 className="font-display text-lg sm:text-xl text-[var(--color-navy)] truncate">{quiz.title}</h1>
           {expiresAt && <CountdownTimer expiresAt={expiresAt} onExpire={onExpire} />}
         </div>
+        {allowCopy && (
+          <div className="inline-flex rounded-lg border border-[var(--color-line)] bg-white p-0.5 text-xs font-medium">
+            <button type="button" onClick={() => setReadOnly(false)} className={`px-3 py-1.5 rounded-md transition-colors ${!readOnly ? 'bg-[var(--color-navy)] text-white' : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-bg)]'}`}>Answer mode</button>
+            <button type="button" onClick={() => setReadOnly(true)} className={`px-3 py-1.5 rounded-md transition-colors ${readOnly ? 'bg-[var(--color-navy)] text-white' : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-bg)]'}`}>Read-only (copy)</button>
+          </div>
+        )}
         <div className="flex items-center justify-between text-xs text-[var(--color-muted)]">
           <span className="font-medium text-[var(--color-ink-soft)]">Question {current + 1} of {total}</span>
           <span>{answeredCount} of {total} answered</span>
@@ -300,6 +325,10 @@ function TakingQuiz({ quiz, attempt, questions, onSubmit, submitting, error }) {
 
       {error && <p className="text-sm text-[var(--color-bad)] bg-[var(--color-bad-soft)] rounded-lg px-3 py-2">{error}</p>}
 
+      {readOnly ? (
+        <ReadOnlyView questions={questions} title={quiz.title} />
+      ) : (
+      <>
       <div className="bg-white rounded-2xl border border-[var(--color-line)] p-5 sm:p-6">
         <div className="flex items-start justify-between gap-3 mb-4">
           <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-[var(--color-navy)] text-white text-sm font-semibold shrink-0">{current + 1}</span>
@@ -337,7 +366,7 @@ function TakingQuiz({ quiz, attempt, questions, onSubmit, submitting, error }) {
         )}
 
         {q.question_type === 'short_answer' && (
-          <TextArea rows={5} value={answers[q.id] || ''} onChange={(e) => typeAnswer(e.target.value)} placeholder="Type your answer..." />
+          <div className="select-text"><TextArea rows={5} value={answers[q.id] || ''} onChange={(e) => typeAnswer(e.target.value)} placeholder="Type your answer..." /></div>
         )}
       </div>
 
@@ -389,6 +418,8 @@ function TakingQuiz({ quiz, attempt, questions, onSubmit, submitting, error }) {
           ))}
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -490,6 +521,86 @@ function QuizReview({ quizTitle, quizId, onBack }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** Puts text on the clipboard, with a fallback for browsers that block the modern API. */
+async function writeClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  document.execCommand('copy');
+  document.body.removeChild(area);
+}
+
+function questionAsText(q, number) {
+  const lines = [`${number}. ${q.question_text}`];
+  if (q.image_url) lines.push(`[Picture: ${q.image_url}]`);
+  if (q.question_type === 'multiple_choice') (q.options || []).forEach((o, i) => lines.push(`${String.fromCharCode(65 + i)}. ${o}`));
+  else if (q.question_type === 'true_false') lines.push('True or False');
+  else lines.push('(Write your answer)');
+  return lines.join('\n');
+}
+
+/** Every question and its answer choices on one page, as plain selectable text. Never shows the correct answers. */
+function ReadOnlyView({ questions, title }) {
+  const [copied, setCopied] = useState('');
+
+  async function copy(key, text) {
+    try {
+      await writeClipboard(text);
+      setCopied(key);
+    } catch {
+      setCopied('failed');
+    }
+    setTimeout(() => setCopied(''), 1800);
+  }
+
+  const all = `${title}\n\n${questions.map((q, i) => questionAsText(q, i + 1)).join('\n\n')}`;
+
+  return (
+    <div className="space-y-4 select-text">
+      <div className="bg-[var(--color-gold-soft)] rounded-2xl p-4 flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-sm text-[var(--color-gold-deep)] max-w-md">
+          Read-only view. Select any text to copy it, or use the copy buttons. Switch back to Answer mode when you are ready to answer and submit.
+        </p>
+        <Button variant="accent" onClick={() => copy('all', all)}>
+          {copied === 'all' ? 'Copied!' : copied === 'failed' ? 'Copy failed. Select the text instead.' : 'Copy all questions'}
+        </Button>
+      </div>
+
+      {questions.map((q, i) => (
+        <div key={q.id} className="bg-white rounded-2xl border border-[var(--color-line)] p-5">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <p className="text-sm font-medium whitespace-pre-wrap">{i + 1}. {q.question_text}</p>
+            <button
+              type="button"
+              onClick={() => copy(q.id, questionAsText(q, i + 1))}
+              className="text-xs font-medium text-[var(--color-navy)] border border-[var(--color-line)] rounded-lg px-2.5 py-1 hover:bg-[var(--color-bg)] transition-colors shrink-0"
+            >
+              {copied === q.id ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+          <QuestionPicture url={q.image_url} />
+          {q.question_type === 'multiple_choice' && (
+            <ul className="space-y-1.5 text-sm">
+              {q.options.map((o, oi) => (
+                <li key={oi}><span className="font-semibold text-[var(--color-muted)] mr-2">{String.fromCharCode(65 + oi)}.</span>{o}</li>
+              ))}
+            </ul>
+          )}
+          {q.question_type === 'true_false' && <p className="text-sm text-[var(--color-ink-soft)]">True or False</p>}
+          {q.question_type === 'short_answer' && <p className="text-sm text-[var(--color-muted)]">(Write your answer)</p>}
+        </div>
+      ))}
     </div>
   );
 }

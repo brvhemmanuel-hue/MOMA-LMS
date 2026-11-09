@@ -70,6 +70,7 @@ export const api = {
   createQuiz: (body) => request('/api/quizzes', { method: 'POST', body }),
   updateQuiz: (id, body) => request(`/api/quizzes/${id}`, { method: 'PUT', body }),
   deleteQuiz: (id) => request(`/api/quizzes/${id}`, { method: 'DELETE' }),
+  resetQuizTimer: (id) => request(`/api/quizzes/${id}/reset-timer`, { method: 'POST' }),
   uploadQuestionImage: (file) => {
     const form = new FormData();
     form.append('image', file);

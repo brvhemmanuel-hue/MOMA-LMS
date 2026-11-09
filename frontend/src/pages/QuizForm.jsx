@@ -23,6 +23,8 @@ export default function QuizForm() {
     unlimited_attempts: true,
     max_attempts: 1,
     shuffle_questions: true,
+    allow_copy: false,
+    shared_timer: false,
     status: 'draft',
   });
   const [locked, setLocked] = useState(false); // true once students have attempted it: questions can no longer change
@@ -55,6 +57,8 @@ export default function QuizForm() {
             unlimited_attempts: !d.quiz.max_attempts,
             max_attempts: d.quiz.max_attempts || 1,
             shuffle_questions: Boolean(d.quiz.shuffle_questions),
+            allow_copy: Boolean(d.quiz.allow_copy),
+            shared_timer: Boolean(d.quiz.shared_timer),
             status: d.quiz.status,
           });
           setLocked(Boolean(d.has_attempts));
@@ -108,6 +112,8 @@ export default function QuizForm() {
       time_limit_minutes: form.time_limit_minutes ? Number(form.time_limit_minutes) : null,
       max_attempts: form.unlimited_attempts ? null : Number(form.max_attempts),
       shuffle_questions: form.shuffle_questions,
+      allow_copy: form.allow_copy,
+      shared_timer: Boolean(form.shared_timer) && Boolean(form.time_limit_minutes),
       status: publish ? 'published' : 'draft',
       ...(locked ? {} : { questions }),
     };
@@ -203,6 +209,40 @@ export default function QuizForm() {
               <span className="block text-sm font-medium text-[var(--color-ink)]">Shuffle the questions for each student</span>
               <span className="block text-xs text-[var(--color-muted)] mt-0.5">
                 Every student gets the questions in a different order, which makes copying harder. Each student's questions are always numbered 1, 2, 3 in order, and their order stays the same if they refresh the page.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-[var(--color-line)] p-5 space-y-4">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.shared_timer && Boolean(form.time_limit_minutes)}
+              disabled={!form.time_limit_minutes}
+              onChange={(e) => setForm({ ...form, shared_timer: e.target.checked })}
+              className="accent-[var(--color-navy)] mt-1 w-4 h-4"
+            />
+            <span>
+              <span className="block text-sm font-medium text-[var(--color-ink)]">Everyone shares one clock</span>
+              <span className="block text-xs text-[var(--color-muted)] mt-0.5">
+                {form.time_limit_minutes
+                  ? 'The timer starts when the first student begins. A student who starts later only gets the time that is left, and nobody can start once the time has run out. Use "Reset clock" on the results page for a new sitting.'
+                  : 'Enter a time limit above to use this option.'}
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.allow_copy}
+              onChange={(e) => setForm({ ...form, allow_copy: e.target.checked })}
+              className="accent-[var(--color-navy)] mt-1 w-4 h-4"
+            />
+            <span>
+              <span className="block text-sm font-medium text-[var(--color-ink)]">Read-only copy mode</span>
+              <span className="block text-xs text-[var(--color-muted)] mt-0.5">
+                Students can switch to a read-only view that shows every question with its answer choices, and copy them (for example to answer in another document). The correct answers are never shown. When this is off, copying and selecting the quiz text is blocked.
               </span>
             </span>
           </label>

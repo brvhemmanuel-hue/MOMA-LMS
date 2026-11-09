@@ -23,6 +23,15 @@ const BAD_SOFT = '#fee2e2';
 const WARN = '#b45309';
 const WARN_SOFT = '#fef3c7';
 
+// Picture limits (points). A picture is drawn at most this big, and the page layout may shrink it
+// down to MIN_PIC_H, or enlarge it a little, so that pages fill up instead of leaving blank gaps.
+const MAX_PIC_W = 320;
+const MAX_PIC_H = 170;
+const MIN_PIC_H = 90;
+// If a question does not fit in the room left on a page but at least this much space remains,
+// its options may continue on the next page rather than leaving a large blank gap.
+const SPLIT_MIN_ROOM = 100;
+
 const SCHOOL_NAME = 'MOUNT OLIVET METHODIST ACADEMY';
 const SCHOOL_LINE = 'Dansoman, Accra  |  MOMA LMS';
 const SCHOOL_MOTTO = 'THE TRUTH STANDS';
@@ -81,7 +90,7 @@ function pictureFor(doc, q, maxW) {
   if (q._pic === undefined) {
     try {
       const img = doc.openImage(q.image_buffer);
-      const scale = Math.min(Math.min(maxW, 340) / img.width, 190 / img.height, 1);
+      const scale = Math.min(Math.min(maxW, MAX_PIC_W) / img.width, MAX_PIC_H / img.height, 1);
       q._pic = { img, w: img.width * scale, h: img.height * scale };
     } catch (err) {
       q._pic = null; // an unreadable picture should never stop the PDF being produced
@@ -90,8 +99,19 @@ function pictureFor(doc, q, maxW) {
   return q._pic;
 }
 
-/** Draws (or just measures, when draw is false) one question block and returns its height. */
-function renderQuestion(doc, q, number, x, y, W, draw) {
+/**
+ * Draws (or just measures, when draw is false) a question, or part of one.
+ *
+ * A question normally lands on a page whole. When a lot of room is left but not enough for all
+ * of it, its answer options may carry on at the top of the next page (opts.startRow > 0 draws
+ * that continuation). opts.maxY stops the options at the page bottom and opts.maxRows caps how
+ * many options this part may hold.
+ *
+ * Returns { h, next, placed }: the height used, the index of the first option still to draw
+ * (null once the question is complete) and how many options this part drew.
+ */
+function renderQuestion(doc, q, number, x, y, W, draw, picH, opts = {}) {
+  const { startRow = 0, maxY = Infinity, maxRows = Infinity } = opts;
   const NUM_W = 30;
   const CHIP_W = 140;
   const body = x + NUM_W;
@@ -99,28 +119,40 @@ function renderQuestion(doc, q, number, x, y, W, draw) {
   const res = outcome(q);
   let cy = y;
 
-  // question text, with the number badge and the result chip
-  doc.font('SemiBold').fontSize(10.5);
-  const qH = doc.heightOfString(q.question_text, { width: bodyW - CHIP_W, lineGap: 2 });
-  if (draw) {
-    doc.circle(x + 10, y + 10, 10).fill(NAVY);
-    doc.font('Bold').fontSize(9).fillColor('#ffffff').text(String(number), x, y + 6.3, { width: 20, align: 'center', lineBreak: false });
-    doc.font('SemiBold').fontSize(10.5).fillColor(INK).text(q.question_text, body, y + 3, { width: bodyW - CHIP_W, lineGap: 2 });
-    chip(doc, res.label, x + W, y + 1, res.fg, res.bg);
-  }
-  cy += Math.max(qH + 6, 22);
-
-  const pic = pictureFor(doc, q, bodyW);
-  if (pic) {
+  if (startRow === 0) {
+    // question text, with the number badge and the result chip
+    doc.font('SemiBold').fontSize(10.5);
+    const qH = doc.heightOfString(q.question_text, { width: bodyW - CHIP_W, lineGap: 2 });
     if (draw) {
-      doc.image(pic.img, body, cy, { width: pic.w, height: pic.h });
-      doc.roundedRect(body - 1, cy - 1, pic.w + 2, pic.h + 2, 3).lineWidth(0.8).strokeColor(LINE).stroke();
+      doc.circle(x + 10, y + 10, 10).fill(NAVY);
+      doc.font('Bold').fontSize(9).fillColor('#ffffff').text(String(number), x, y + 6.3, { width: 20, align: 'center', lineBreak: false });
+      doc.font('SemiBold').fontSize(10.5).fillColor(INK).text(q.question_text, body, y + 3, { width: bodyW - CHIP_W, lineGap: 2 });
+      chip(doc, res.label, x + W, y + 1, res.fg, res.bg);
     }
-    cy += pic.h + 10;
-  }
+    cy += Math.max(qH + 6, 22);
 
-  if (draw) doc.font('Regular').fontSize(8).fillColor(MUTED).text(`${TYPE_LABEL[q.question_type] || q.question_type}  |  ${fmt(q.points)} mark${num(q.points) === 1 ? '' : 's'}`, body, cy, { lineBreak: false });
-  cy += 15;
+    const pic = pictureFor(doc, q, bodyW);
+    if (pic) {
+      const ph = picH ?? pic.h; // may have been resized by the page layout
+      const pw = pic.w * (ph / pic.h);
+      if (draw) {
+        doc.image(pic.img, body, cy, { width: pw, height: ph });
+        doc.roundedRect(body - 1, cy - 1, pw + 2, ph + 2, 3).lineWidth(0.8).strokeColor(LINE).stroke();
+      }
+      cy += ph + 8;
+    }
+
+    if (draw) doc.font('Regular').fontSize(8).fillColor(MUTED).text(`${TYPE_LABEL[q.question_type] || q.question_type}  |  ${fmt(q.points)} mark${num(q.points) === 1 ? '' : 's'}`, body, cy, { lineBreak: false });
+    cy += 14;
+  } else {
+    // the rest of a question that began on the previous page
+    if (draw) {
+      doc.circle(x + 9, y + 9, 9).fill(NAVY);
+      doc.font('Bold').fontSize(8).fillColor('#ffffff').text(String(number), x, y + 5.6, { width: 18, align: 'center', lineBreak: false });
+      doc.font('SemiBold').fontSize(8.5).fillColor(MUTED).text('(continued)', body - 6, y + 4.5, { lineBreak: false });
+    }
+    cy += 26;
+  }
 
   const answered = String(q.answer_text ?? '').trim() !== '';
 
@@ -143,44 +175,58 @@ function renderQuestion(doc, q, number, x, y, W, draw) {
     doc.font('SemiBold').fontSize(9);
     if (draw) doc.fillColor(pending ? WARN : INK).text(note, body, cy, { width: bodyW });
     cy += doc.heightOfString(note, { width: bodyW }) + 4;
-  } else {
-    const options = Array.isArray(q.options) ? q.options : [];
-    const correctIdx = options.findIndex((o) => eq(o, q.correct_answer));
-    const studentIdx = answered ? options.findIndex((o) => eq(o, q.answer_text)) : -1;
-    const isMc = q.question_type === 'multiple_choice';
-    const TAG_W = 118;
-    options.forEach((opt, i) => {
-      const label = isMc ? `${String.fromCharCode(65 + i)}.  ${opt}` : String(opt);
-      doc.font('Regular').fontSize(9.5);
-      const th = doc.heightOfString(label, { width: bodyW - 34 - TAG_W });
-      const rowH = Math.max(22, th + 10);
-      const isCorrect = i === correctIdx;
-      const isStudent = i === studentIdx;
-      if (draw) {
-        if (isCorrect) doc.roundedRect(body, cy, bodyW, rowH, 5).fill(GOOD_SOFT);
-        else if (isStudent) doc.roundedRect(body, cy, bodyW, rowH, 5).fill(BAD_SOFT);
-        const mx = body + 13;
-        const my = cy + rowH / 2;
-        if (isCorrect) tickIcon(doc, mx, my);
-        else if (isStudent) crossIcon(doc, mx, my);
-        else doc.circle(mx, my, 6.5).lineWidth(1).strokeColor('#cbd5e1').stroke();
-        doc.font(isCorrect || isStudent ? 'SemiBold' : 'Regular').fontSize(9.5).fillColor(INK).text(label, body + 30, cy + (rowH - th) / 2, { width: bodyW - 34 - TAG_W });
-        if (isCorrect || isStudent) {
-          const tag = isCorrect && isStudent ? 'Your answer (correct)' : isCorrect ? 'Correct answer' : 'Your answer';
-          doc.font('SemiBold').fontSize(8).fillColor(isCorrect ? GOOD : BAD).text(tag, body + bodyW - TAG_W - 8, cy + rowH / 2 - 4, { width: TAG_W, align: 'right', lineBreak: false });
-        }
-      }
-      cy += rowH + 3;
-    });
-    if (!answered) {
-      if (draw) doc.font('SemiBold').fontSize(8.5).fillColor(WARN).text('You did not answer this question.', body, cy + 2, { lineBreak: false });
-      cy += 16;
-    }
+    cy += 6;
+    if (draw) doc.moveTo(x, cy).lineTo(x + W, cy).lineWidth(0.6).strokeColor(LINE).stroke();
+    return { h: cy + 11 - y, next: null, placed: 0 };
   }
 
-  cy += 8;
+  const options = Array.isArray(q.options) ? q.options : [];
+  const correctIdx = options.findIndex((o) => eq(o, q.correct_answer));
+  const studentIdx = answered ? options.findIndex((o) => eq(o, q.answer_text)) : -1;
+  const isMc = q.question_type === 'multiple_choice';
+  const TAG_W = 118;
+  let placed = 0;
+  let next = null;
+
+  for (let i = startRow; i < options.length; i++) {
+    const opt = options[i];
+    const label = isMc ? `${String.fromCharCode(65 + i)}.  ${opt}` : String(opt);
+    doc.font('Regular').fontSize(9.5);
+    const th = doc.heightOfString(label, { width: bodyW - 34 - TAG_W });
+    const rowH = Math.max(20, th + 9);
+    if (cy + rowH > maxY || placed >= maxRows) {
+      next = i;
+      break;
+    }
+    const isCorrect = i === correctIdx;
+    const isStudent = i === studentIdx;
+    if (draw) {
+      if (isCorrect) doc.roundedRect(body, cy, bodyW, rowH, 5).fill(GOOD_SOFT);
+      else if (isStudent) doc.roundedRect(body, cy, bodyW, rowH, 5).fill(BAD_SOFT);
+      const mx = body + 13;
+      const my = cy + rowH / 2;
+      if (isCorrect) tickIcon(doc, mx, my);
+      else if (isStudent) crossIcon(doc, mx, my);
+      else doc.circle(mx, my, 6.5).lineWidth(1).strokeColor('#cbd5e1').stroke();
+      doc.font(isCorrect || isStudent ? 'SemiBold' : 'Regular').fontSize(9.5).fillColor(INK).text(label, body + 30, cy + (rowH - th) / 2, { width: bodyW - 34 - TAG_W });
+      if (isCorrect || isStudent) {
+        const tag = isCorrect && isStudent ? 'Your answer (correct)' : isCorrect ? 'Correct answer' : 'Your answer';
+        doc.font('SemiBold').fontSize(8).fillColor(isCorrect ? GOOD : BAD).text(tag, body + bodyW - TAG_W - 8, cy + rowH / 2 - 4, { width: TAG_W, align: 'right', lineBreak: false });
+      }
+    }
+    cy += rowH + 2;
+    placed += 1;
+  }
+
+  if (next !== null) return { h: cy - y, next, placed };
+
+  if (!answered) {
+    if (draw) doc.font('SemiBold').fontSize(8.5).fillColor(WARN).text('You did not answer this question.', body, cy + 2, { lineBreak: false });
+    cy += 16;
+  }
+  cy += 6;
   if (draw) doc.moveTo(x, cy).lineTo(x + W, cy).lineWidth(0.6).strokeColor(LINE).stroke();
-  return cy + 14 - y;
+  return { h: cy + 11 - y, next: null, placed };
 }
 
 /**
@@ -296,14 +342,94 @@ function buildAttemptPdf(d) {
   doc.rect(L, y + 17, 34, 2.5).fill(GOLD);
   y += 34;
 
+  // Step 1: decide which questions go on which page (measuring only, nothing is drawn yet).
+  const pages = [[]];
+  let py = y;
+  const place = (item) => {
+    pages[pages.length - 1].push(item);
+    py += item.h;
+  };
+  const newPage = () => {
+    pages.push([]);
+    py = top;
+  };
+  const measure = (q, n, picH, opts) => renderQuestion(doc, q, n, L, 0, W, false, picH, opts);
+
   d.questions.forEach((q, i) => {
-    const h = renderQuestion(doc, q, i + 1, L, y, W, false);
-    if (y + h > limit) {
+    const n = i + 1;
+    const full = measure(q, n).h;
+
+    // 1. it fits: place it whole
+    if (py + full <= limit) {
+      place({ q, n, h: full });
+      return;
+    }
+
+    const room = limit - py;
+
+    // 2. it has a picture: shrink the picture by just the missing amount (down to a readable
+    //    minimum), so the whole question stays here and no big gap is left
+    const pic = pictureFor(doc, q, W - 30);
+    if (pic) {
+      const target = pic.h - (full - room) - 1;
+      if (target >= MIN_PIC_H) {
+        place({ q, n, picH: target, h: measure(q, n, target).h });
+        return;
+      }
+    }
+
+    // 3. a lot of room left: put the question and as many options as fit here, and carry the
+    //    rest over to the next page (never leaving a single option on its own)
+    if (q.question_type !== 'short_answer' && room >= SPLIT_MIN_ROOM) {
+      const total = (q.options || []).length;
+      const probe = renderQuestion(doc, q, n, L, py, W, false, undefined, { maxY: limit });
+      let rows = probe.placed;
+      if (probe.next !== null && total - rows === 1) rows -= 1;
+      if (probe.next !== null && rows >= 2) {
+        place({ q, n, h: measure(q, n, undefined, { maxRows: rows }).h, opts: { maxRows: rows } });
+        newPage();
+        place({ q, n, h: measure(q, n, undefined, { startRow: rows }).h, opts: { startRow: rows } });
+        return;
+      }
+    }
+
+    // 4. otherwise start a new page
+    newPage();
+    place({ q, n, h: full });
+  });
+
+  // Step 2: draw page by page. Space left at the bottom of a full page is put to use: first by
+  // enlarging that page's pictures a little, then by spreading what remains between the questions.
+  pages.forEach((items, pageIndex) => {
+    if (pageIndex > 0) {
       doc.addPage();
       y = top;
     }
-    renderQuestion(doc, q, i + 1, L, y, W, true);
-    y += h;
+    const isLast = pageIndex === pages.length - 1;
+    let spare = limit - (y + items.reduce((t, it) => t + it.h, 0));
+
+    if (!isLast && spare > 6) {
+      for (const it of items) {
+        if (spare <= 0) break;
+        if (it.opts && it.opts.startRow) continue; // a continuation has no picture
+        const pic = pictureFor(doc, it.q, W - 30);
+        if (!pic) continue;
+        const current = it.picH ?? pic.h;
+        const maxH = Math.min(pic.h * 1.35, pic.img.height);
+        const grow = Math.min(spare, Math.max(0, maxH - current));
+        if (grow > 1) {
+          it.picH = current + grow;
+          it.h = measure(it.q, it.n, it.picH, it.opts).h;
+          spare -= grow;
+        }
+      }
+    }
+
+    const gap = !isLast && items.length > 1 && spare > 0 ? Math.min(spare / (items.length - 1), 14) : 0;
+    items.forEach((it, i) => {
+      const drawn = renderQuestion(doc, it.q, it.n, L, y, W, true, it.picH, it.opts);
+      y += drawn.h + (i < items.length - 1 ? gap : 0);
+    });
   });
 
   // ---------------------------------------------------------------- footer on every page

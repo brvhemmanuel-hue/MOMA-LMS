@@ -140,3 +140,11 @@ moma-lms/
 4. Parsed questions land in the same editable question list used for building a quiz by hand, so the teacher can fix, reorder, or add to them before saving.
 
 Everything from date/time scheduling to grading was built with this in mind: this is meant to feel like a real school LMS, not a demo.
+
+---
+
+## Updating a database you already have
+
+This release adds shuffled questions, question pictures, admin approval of new accounts, the shared quiz clock and read-only copy mode. A **fresh install** gets everything from `database/schema.sql`. If you already have a live database, run `database/migrations/001_shuffle_approvals_and_images.sql` once in the Neon SQL editor **before** deploying the new code. Every existing account stays approved, so nobody is locked out.
+
+The backend now bundles the school crest and a font inside `backend/src/assets` (needed for the results PDF), and `backend/vercel.json` includes them in the serverless function. Question pictures are stored in Vercel Blob, the same store you already use for exercises and materials.

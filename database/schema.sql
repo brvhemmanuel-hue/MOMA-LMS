@@ -59,6 +59,9 @@ create table if not exists quizzes (
   available_until timestamptz,         -- null = no deadline
   max_attempts integer,                -- null = unlimited attempts; otherwise a positive integer
   shuffle_questions boolean not null default false,  -- each student sees the questions in their own order
+  allow_copy boolean not null default false,         -- students can switch to a read-only view and copy the questions
+  shared_timer boolean not null default false,       -- one clock for everyone: it starts when the first student begins
+  timer_started_at timestamptz,                      -- when that shared clock started (null = not running)
   status text not null default 'draft' check (status in ('draft', 'published')),
   created_at timestamptz not null default now()
 );
@@ -81,6 +84,7 @@ create table if not exists quiz_attempts (
   student_id uuid not null references users(id) on delete cascade,
   attempt_number integer not null default 1,
   started_at timestamptz not null default now(),
+  deadline_at timestamptz,             -- when this attempt must be finished (null = untimed)
   submitted_at timestamptz,
   score numeric(6,2),
   max_score numeric(6,2),
